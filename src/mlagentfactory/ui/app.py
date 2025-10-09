@@ -69,7 +69,7 @@ def main():
     )
 
     # Initialize observability
-    initialize_observability(log_level="INFO", enable_tracing=False)
+    initialize_observability(log_level="DEBUG", enable_tracing=False)
 
     # Initialize session state
     initialize_session_state()

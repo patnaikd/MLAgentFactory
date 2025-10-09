@@ -6,6 +6,7 @@ from typing import Dict, Optional
 import re
 import logging
 from urllib.parse import urlparse
+from playwright.async_api import async_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +25,8 @@ class WebFetcherAgent:
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
         }
 
-    def fetch_page_content(self, url: str) -> Optional[str]:
-        """Fetch HTML content from URL
+    async def fetch_page_content_with_playwright(self, url: str) -> Optional[str]:
+        """Fetch HTML content from URL using Playwright (for JavaScript-heavy sites)
 
         Args:
             url: URL to fetch
@@ -34,8 +35,46 @@ class WebFetcherAgent:
             HTML content as string, or None if failed
         """
         try:
+            logger.info(f"Fetching content with Playwright from {url}")
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Set user agent
+                await page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                })
+
+                # Navigate to the page and wait for network to be idle
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+
+                # Wait a bit more for any dynamic content
+                await page.wait_for_timeout(2000)
+
+                # Get the rendered HTML
+                html = await page.content()
+                await browser.close()
+
+                logger.info(f"Successfully fetched {len(html)} bytes from {url} using Playwright")
+                return html
+        except Exception as e:
+            logger.error(f"Failed to fetch URL {url} with Playwright: {e}")
+            return None
+
+    def fetch_page_content(self, url: str) -> Optional[str]:
+        """Fetch HTML content from URL (fallback method using requests)
+
+        Args:
+            url: URL to fetch
+
+        Returns:
+            HTML content as string, or None if failed
+        """
+        try:
+            logger.info(f"Fetching content from {url}")
             response = requests.get(url, headers=self.headers, timeout=30)
             response.raise_for_status()
+            logger.info(f"Successfully fetched {len(response.text)} bytes from {url}")
             return response.text
         except requests.RequestException as e:
             logger.error(f"Failed to fetch URL {url}: {e}")
@@ -182,14 +221,26 @@ Format your response as a structured summary that can be easily parsed."""
         if not all([parsed.scheme, parsed.netloc]):
             return {"error": "Invalid URL format"}
 
-        # Fetch content
-        html = self.fetch_page_content(url)
+        # Try Playwright first for JavaScript-heavy sites (like Kaggle)
+        html = await self.fetch_page_content_with_playwright(url)
+
+        # Fallback to requests if Playwright fails
+        if not html:
+            logger.info("Playwright failed, trying fallback with requests")
+            html = self.fetch_page_content(url)
+
         if not html:
             return {"error": "Failed to fetch page content"}
 
         # Extract text
         text = self.extract_text_content(html)
+        logger.info(f"Extracted text length: {len(text) if text else 0} characters")
+
         if not text or len(text) < 100:
+            logger.warning(f"Insufficient content extracted. Length: {len(text) if text else 0}")
+            # Debug: log first 500 chars of HTML to see what we're getting
+            logger.debug(f"HTML preview: {html[:500]}")
+            logger.debug(f"Text preview: {text}")
             return {"error": "Insufficient content extracted from page"}
 
         # Parse with LLM
