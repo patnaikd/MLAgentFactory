@@ -33,7 +33,7 @@ async def main():
     # Define the task for the agent
     task = """
     Create a new file called 'hello_world.txt' in the current directory
-    with the content 'Hello World from Claude Agent!'.
+    with the content consisting of a short poem about saying hello to the world.
     """
 
     print("Starting File Creation Agent...")
