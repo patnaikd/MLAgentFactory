@@ -20,6 +20,18 @@ def initialize_session_state():
     if "agent" not in st.session_state:
         st.session_state.agent = None
 
+    if "event_loop" not in st.session_state:
+        # Create a persistent event loop for the session
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        st.session_state.event_loop = loop
+
 
 def render_chat_message(role: str, content: str):
     """Render a chat message with appropriate styling"""
@@ -89,7 +101,7 @@ def main():
             # Clean up old agent
             if st.session_state.agent:
                 try:
-                    asyncio.run(cleanup_agent())
+                    st.session_state.event_loop.run_until_complete(cleanup_agent())
                 except Exception as e:
                     st.warning(f"Cleanup warning: {e}")
             st.session_state.messages = []
@@ -119,7 +131,7 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    response = asyncio.run(process_message(prompt))
+                    response = st.session_state.event_loop.run_until_complete(process_message(prompt))
                     st.markdown(response)
                 except Exception as e:
                     response = f"❌ Error: {str(e)}"

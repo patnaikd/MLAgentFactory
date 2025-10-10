@@ -14,7 +14,7 @@ from claude_agent_sdk import (
 )
 
 from ..utils.logging_config import initialize_observability
-from ..tools import write_file, fetch_webpage
+from ..tools import file_io_tools, web_fetch_tools
 
 logger = logging.getLogger(__name__)
 
@@ -24,56 +24,66 @@ class ChatAgent:
 
     def __init__(self):
         """Initialize the chat agent."""
-        initialize_observability(log_level="INFO", enable_tracing=False)
+        initialize_observability(log_level="DEBUG", enable_tracing=False)
 
         # Create MCP servers with tools
         self.file_server = create_sdk_mcp_server(
             name="file_tools",
             version="1.0.0",
-            tools=[write_file]
+            tools=[
+                file_io_tools.read_file,
+                file_io_tools.write_file,
+                file_io_tools.edit_file,
+                file_io_tools.delete_file,
+                file_io_tools.list_directory,
+                file_io_tools.create_directory,
+                file_io_tools.remove_directory
+            ]
         )
 
         self.web_server = create_sdk_mcp_server(
             name="web_tools",
             version="1.0.0",
-            tools=[fetch_webpage]
+            tools=[web_fetch_tools.fetch_webpage]
         )
 
         # Configure agent options
         self.options = ClaudeAgentOptions(
             mcp_servers={"files": self.file_server, "web": self.web_server},
-            allowed_tools=["write_file", "fetch_webpage"],
+            #allowed_tools=["Read", "Write", "Edit", "Delete", "List", "Create", "Remove", "Fetch", "Bash", "Calculate", "Python", "Search", "Ask", "Lookup", "Summarize"],
+            allowed_tools=[
+                "read_file",
+                "write_file",
+                "edit_file",
+                "delete_file",
+                "list_directory",
+                "create_directory",
+                "remove_directory",
+                "fetch_webpage"
+            ],
             permission_mode="bypassPermissions"
         )
 
         self.client: Optional[ClaudeSDKClient] = None
         self._initialized = False
-        logger.info("ChatAgent initialized with file and web tools")
+        logger.info("ChatAgent initialized with file I/O and web tools")
 
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""
         if not self._initialized:
             self.client = ClaudeSDKClient(options=self.options)
-            await self.client.__aenter__()
+            await self.client.connect()
             self._initialized = True
-            logger.info("ChatAgent client initialized")
+            logger.info("ChatAgent client initialized and connected")
 
     async def cleanup(self):
         """Cleanup the client. Call this when done with the agent."""
         if self._initialized and self.client:
-            await self.client.__aexit__(None, None, None)
+            await self.client.disconnect()
             self._initialized = False
             self.client = None
-            logger.info("ChatAgent client cleaned up")
+            logger.info("ChatAgent client cleaned up and disconnected")
 
-    async def __aenter__(self):
-        """Async context manager entry."""
-        await self.initialize()
-        return self
-
-    async def __aexit__(self, _exc_type, _exc_val, _exc_tb):
-        """Async context manager exit."""
-        await self.cleanup()
 
     async def send_message(self, message: str) -> AsyncGenerator[Dict, None]:
         """Send a message and stream the response.
@@ -88,20 +98,27 @@ class ChatAgent:
             raise RuntimeError("ChatAgent must be used as an async context manager")
 
         logger.info(f"Sending message: {message[:100]}...")
+        logger.debug(f"Input to ClaudeSDKClient.query(): {message!r}")
 
         # Send the query
         await self.client.query(message)
 
         # Stream the response
         async for msg in self.client.receive_response():
+            logger.debug(f"Raw message from ClaudeSDKClient.receive_response(): {msg!r}")
+
             if isinstance(msg, AssistantMessage):
+                logger.debug(f"AssistantMessage content blocks: {msg.content!r}")
+
                 for block in msg.content:
                     if isinstance(block, TextBlock):
+                        logger.debug(f"TextBlock: {block!r}")
                         yield {
                             "type": "text",
                             "content": block.text
                         }
                     elif isinstance(block, ToolUseBlock):
+                        logger.debug(f"ToolUseBlock: {block!r}")
                         yield {
                             "type": "tool_use",
                             "content": f"Using tool: {block.name}"
@@ -118,9 +135,14 @@ class ChatAgent:
         """
         response_parts = []
 
+        logger.info(f"Starting chat response for message: {message[:100]}")
+
         async for chunk in self.send_message(message):
             if chunk["type"] == "text":
                 response_parts.append(chunk["content"])
+
+
+        logger.info("Completed chat response", extra={"response": "".join(response_parts)[:100]})
 
         return "".join(response_parts)
 

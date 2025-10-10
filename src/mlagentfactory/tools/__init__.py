@@ -4,7 +4,7 @@ Tools module for MLAgentFactory.
 This module contains various tools that can be used with Claude agents.
 """
 
-from .file_io_tools import write_file
-from .web_fetch_tools import fetch_webpage
+from . import file_io_tools
+from . import web_fetch_tools
 
-__all__ = ["write_file", "fetch_webpage"]
+__all__ = ["file_io_tools", "web_fetch_tools"]

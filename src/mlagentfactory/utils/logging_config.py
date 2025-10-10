@@ -27,9 +27,9 @@ def setup_logging(level: str = "INFO", format_json: bool = False) -> None:
             '"logger": "%(name)s", "message": "%(message)s"}'
         )
     else:
-        # For development, use human-readable format
+        # For development, use human-readable format with source location
         formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
