@@ -14,7 +14,7 @@ from claude_agent_sdk import (
 )
 
 from ..utils.logging_config import initialize_observability
-from ..tools import file_io_tools, web_fetch_tools
+from ..tools import file_io_tools, web_fetch_tools, kaggle_tools
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +47,26 @@ class ChatAgent:
             tools=[web_fetch_tools.fetch_webpage]
         )
 
+        self.kaggle_server = create_sdk_mcp_server(
+            name="kaggle_tools",
+            version="1.0.0",
+            tools=[
+                kaggle_tools.kaggle_download_dataset,
+                kaggle_tools.kaggle_list_competitions,
+                kaggle_tools.kaggle_download_competition_data,
+                kaggle_tools.kaggle_submit_competition,
+                kaggle_tools.kaggle_list_submissions,
+                kaggle_tools.kaggle_competition_leaderboard
+            ]
+        )
+
         # Configure agent options
         self.options = ClaudeAgentOptions(
-            mcp_servers={"files": self.file_server, "web": self.web_server},
+            mcp_servers={
+                "files": self.file_server,
+                "web": self.web_server,
+                "kaggle": self.kaggle_server
+            },
             #allowed_tools=["Read", "Write", "Edit", "Delete", "List", "Create", "Remove", "Fetch", "Bash", "Calculate", "Python", "Search", "Ask", "Lookup", "Summarize"],
             allowed_tools=[
                 "read_file",
@@ -59,14 +76,20 @@ class ChatAgent:
                 "list_directory",
                 "create_directory",
                 "remove_directory",
-                "fetch_webpage"
+                "fetch_webpage",
+                "kaggle_download_dataset",
+                "kaggle_list_competitions",
+                "kaggle_download_competition_data",
+                "kaggle_submit_competition",
+                "kaggle_list_submissions",
+                "kaggle_competition_leaderboard"
             ],
             permission_mode="bypassPermissions"
         )
 
         self.client: Optional[ClaudeSDKClient] = None
         self._initialized = False
-        logger.info("ChatAgent initialized with file I/O and web tools")
+        logger.info("ChatAgent initialized with file I/O, web, and Kaggle tools")
 
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""
