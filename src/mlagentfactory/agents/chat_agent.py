@@ -7,8 +7,11 @@ from typing import AsyncGenerator, Dict, List, Optional
 from claude_agent_sdk import (
     ClaudeSDKClient,
     AssistantMessage,
+    UserMessage,
+    SystemMessage,
     TextBlock,
     ToolUseBlock,
+    ToolResultBlock,
     create_sdk_mcp_server,
     ClaudeAgentOptions
 )
@@ -120,32 +123,90 @@ class ChatAgent:
         if not self.client:
             raise RuntimeError("ChatAgent must be used as an async context manager")
 
-        logger.info(f"Sending message: {message[:100]}...")
-        logger.debug(f"Input to ClaudeSDKClient.query(): {message!r}")
+        # Log outgoing message
+        logger.info(f"[OUTGOING] User message: {message[:100]}{'...' if len(message) > 100 else ''}")
+        logger.debug(f"[OUTGOING] Full message content: {message!r}")
 
         # Send the query
-        await self.client.query(message)
+        try:
+            await self.client.query(message)
+            logger.debug("[OUTGOING] Message sent to ClaudeSDKClient successfully")
+        except Exception as e:
+            logger.error(f"[OUTGOING] Failed to send message: {e}", exc_info=True)
+            raise
 
         # Stream the response
+        response_count = 0
         async for msg in self.client.receive_response():
-            logger.debug(f"Raw message from ClaudeSDKClient.receive_response(): {msg!r}")
+            response_count += 1
+            logger.debug(f"[INCOMING] Message #{response_count} received: {type(msg).__name__}")
 
             if isinstance(msg, AssistantMessage):
-                logger.debug(f"AssistantMessage content blocks: {msg.content!r}")
+                logger.info(f"[INCOMING] AssistantMessage with {len(msg.content)} content blocks")
 
-                for block in msg.content:
+                for idx, block in enumerate(msg.content):
                     if isinstance(block, TextBlock):
-                        logger.debug(f"TextBlock: {block!r}")
+                        logger.info(f"[INCOMING] TextBlock #{idx+1}: {block.text[:100]}{'...' if len(block.text) > 100 else ''}")
+                        logger.debug(f"[INCOMING] TextBlock #{idx+1} full content: {block.text!r}")
                         yield {
                             "type": "text",
                             "content": block.text
                         }
                     elif isinstance(block, ToolUseBlock):
-                        logger.debug(f"ToolUseBlock: {block!r}")
+                        logger.info(f"[INCOMING] ToolUseBlock #{idx+1}: tool={block.name}, id={block.id}")
+                        logger.debug(f"[INCOMING] ToolUseBlock #{idx+1} full details: {block!r}")
                         yield {
                             "type": "tool_use",
                             "content": f"Using tool: {block.name}"
                         }
+                    else:
+                        logger.warning(f"[INCOMING] Unknown block type #{idx+1}: {type(block).__name__}")
+
+            elif isinstance(msg, UserMessage):
+                logger.info(f"[INCOMING] UserMessage with {len(msg.content)} content blocks")
+
+                for idx, block in enumerate(msg.content):
+                    if isinstance(block, ToolResultBlock):
+                        logger.info(f"[INCOMING] ToolResultBlock #{idx+1}: tool_use_id={block.tool_use_id}, is_error={block.is_error}")
+                        logger.debug(f"[INCOMING] ToolResultBlock #{idx+1} content: {block.content[:200] if isinstance(block.content, str) else block.content}")
+                        # Don't yield tool results to the user - they're internal to the agent
+                    elif isinstance(block, TextBlock):
+                        logger.info(f"[INCOMING] UserMessage TextBlock #{idx+1}: {block.text[:100]}{'...' if len(block.text) > 100 else ''}")
+                        logger.debug(f"[INCOMING] UserMessage TextBlock #{idx+1} full content: {block.text!r}")
+                        # User messages are typically echoes or system messages, can be yielded if needed
+                    else:
+                        logger.warning(f"[INCOMING] Unknown UserMessage block type #{idx+1}: {type(block).__name__}")
+
+            elif isinstance(msg, SystemMessage):
+                subtype = getattr(msg, 'subtype', 'unknown')
+                logger.info(f"[INCOMING] SystemMessage: subtype={subtype}")
+
+                # Log key system information at debug level
+                if hasattr(msg, 'data'):
+                    data = msg.data
+                    if isinstance(data, dict):
+                        # Log interesting system info
+                        if 'session_id' in data:
+                            logger.debug(f"[INCOMING] SystemMessage session_id: {data['session_id']}")
+                        if 'cwd' in data:
+                            logger.debug(f"[INCOMING] SystemMessage cwd: {data['cwd']}")
+                        if 'model' in data:
+                            logger.debug(f"[INCOMING] SystemMessage model: {data['model']}")
+                        if 'mcp_servers' in data:
+                            logger.debug(f"[INCOMING] SystemMessage mcp_servers: {data['mcp_servers']}")
+                        if 'tools' in data and isinstance(data['tools'], list):
+                            logger.debug(f"[INCOMING] SystemMessage tools count: {len(data['tools'])}")
+
+                        # Full data at debug level
+                        logger.debug(f"[INCOMING] SystemMessage full data: {data!r}")
+                    else:
+                        logger.debug(f"[INCOMING] SystemMessage data: {data!r}")
+                # Don't yield system messages to the user - they're internal initialization messages
+
+            else:
+                logger.warning(f"[INCOMING] Unexpected message type: {type(msg).__name__}, content: {msg!r}")
+
+        logger.info(f"[INCOMING] Response stream completed. Total messages received: {response_count}")
 
     async def chat(self, message: str) -> str:
         """Send a message and return the complete response.
@@ -157,17 +218,21 @@ class ChatAgent:
             The complete response text
         """
         response_parts = []
+        logger.info(f"[CHAT] Starting chat session for message: {message[:100]}{'...' if len(message) > 100 else ''}")
 
-        logger.info(f"Starting chat response for message: {message[:100]}")
+        try:
+            async for chunk in self.send_message(message):
+                if chunk["type"] == "text":
+                    response_parts.append(chunk["content"])
 
-        async for chunk in self.send_message(message):
-            if chunk["type"] == "text":
-                response_parts.append(chunk["content"])
+            full_response = "".join(response_parts)
+            logger.info(f"[CHAT] Completed chat session. Response length: {len(full_response)} chars")
+            logger.debug(f"[CHAT] Full response: {full_response!r}")
 
-
-        logger.info("Completed chat response", extra={"response": "".join(response_parts)[:100]})
-
-        return "".join(response_parts)
+            return full_response
+        except Exception as e:
+            logger.error(f"[CHAT] Chat session failed: {e}", exc_info=True)
+            raise
 
 
 async def demo():
