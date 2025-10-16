@@ -44,6 +44,12 @@ def initialize_session_state():
     if "agent" not in st.session_state:
         st.session_state.agent = None
 
+    if "session_id" not in st.session_state:
+        st.session_state.session_id = None
+
+    if "total_cost" not in st.session_state:
+        st.session_state.total_cost = 0.0
+
     if "event_loop" not in st.session_state:
         # Create a persistent event loop for the session
         try:
@@ -67,6 +73,9 @@ def setup_logging():
 
     # Get root logger
     root_logger = logging.getLogger()
+
+    # Set root logger level to DEBUG to capture all logs
+    root_logger.setLevel(logging.DEBUG)
 
     # Check if StreamlitLogHandler is already added
     has_streamlit_handler = any(
@@ -94,15 +103,40 @@ def get_or_create_agent():
     return st.session_state.agent
 
 
-async def process_message(message: str) -> str:
-    """Process a message through the agent."""
+def process_message_streaming(message: str):
+    """Process a message through the agent with streaming response.
+
+    Yields response chunks as they arrive synchronously.
+    """
     agent = get_or_create_agent()
 
     # Initialize if not already initialized
     if not agent._initialized:
-        await agent.initialize()
+        st.session_state.event_loop.run_until_complete(agent.initialize())
 
-    return await agent.chat(message)
+    # Create the async generator
+    async def _stream():
+        async for chunk in agent.send_message(message):
+            if chunk["type"] == "text":
+                yield chunk["content"]
+            elif chunk["type"] == "tool_use":
+                # Optionally show tool usage in the stream
+                yield f"\n\n*{chunk['content']}*\n\n"
+            elif chunk["type"] == "session_id":
+                # Capture session_id in session state
+                st.session_state.session_id = chunk["content"]
+            elif chunk["type"] == "total_cost":
+                # Capture total_cost in session state
+                st.session_state.total_cost = chunk["content"]
+
+    # Convert async generator to sync for Streamlit
+    gen = _stream()
+    while True:
+        try:
+            chunk = st.session_state.event_loop.run_until_complete(gen.__anext__())
+            yield chunk
+        except StopAsyncIteration:
+            break
 
 
 async def cleanup_agent():
@@ -275,6 +309,11 @@ def main():
 
     # Header
     st.title("🤖 MLAgentFactory")
+
+    # Display session ID and cost if available
+    if st.session_state.session_id:
+        cost_display = f" | 💰 Total Cost: ${st.session_state.total_cost:.2f}" if st.session_state.total_cost > 0 else ""
+        st.caption(f"🔗 Session ID: `{st.session_state.session_id}`{cost_display}")
     # st.markdown("### AI Chat Assistant with Tool Support")
     # st.markdown("---")
 
@@ -300,6 +339,8 @@ def main():
                 except Exception as e:
                     st.warning(f"Cleanup warning: {e}")
             st.session_state.messages = []
+            st.session_state.session_id = None
+            st.session_state.total_cost = 0.0
             st.rerun()
 
         # Display message count
@@ -330,15 +371,13 @@ def main():
             # Display user message
             render_chat_message("user", prompt)
 
-            # Process with agent
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        response = st.session_state.event_loop.run_until_complete(process_message(prompt))
-                        st.markdown(response)
-                    except Exception as e:
-                        response = f"❌ Error: {str(e)}"
-                        st.error(response)
+            # Process with agent using streaming
+            try:
+                # Use st.write_stream for non-blocking streaming display
+                response = st.write_stream(process_message_streaming(prompt))
+            except Exception as e:
+                response = f"❌ Error: {str(e)}"
+                st.error(response)
 
             # Add assistant response
             st.session_state.messages.append({

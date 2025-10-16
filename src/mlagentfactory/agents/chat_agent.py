@@ -1,5 +1,5 @@
 """Simple conversational agent using Claude Agent SDK with MCP servers."""
-
+import json
 import asyncio
 import logging
 from typing import AsyncGenerator, Dict, List, Optional
@@ -9,6 +9,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     UserMessage,
     SystemMessage,
+    ResultMessage,
     TextBlock,
     ToolUseBlock,
     ToolResultBlock,
@@ -27,22 +28,14 @@ class ChatAgent:
 
     def __init__(self):
         """Initialize the chat agent."""
-        initialize_observability(log_level="DEBUG", enable_tracing=False)
-
-        # Create MCP servers with tools
-        self.file_server = create_sdk_mcp_server(
-            name="file_tools",
-            version="1.0.0",
-            tools=[
-                file_io_tools.read_file,
-                file_io_tools.write_file,
-                file_io_tools.edit_file,
-                file_io_tools.delete_file,
-                file_io_tools.list_directory,
-                file_io_tools.create_directory,
-                file_io_tools.remove_directory
-            ]
-        )
+        # Only initialize observability if not already configured
+        # (Streamlit UI will handle initialization)
+        root_logger = logging.getLogger()
+        if not root_logger.handlers:
+            initialize_observability(log_level="DEBUG", enable_tracing=False)
+        else:
+            # Ensure DEBUG level is set even if handlers exist
+            root_logger.setLevel(logging.DEBUG)
 
         self.web_server = create_sdk_mcp_server(
             name="web_tools",
@@ -65,20 +58,13 @@ class ChatAgent:
 
         # Configure agent options
         self.options = ClaudeAgentOptions(
+            system_prompt="You are an expert machine learning engineer designed to help with coding tasks, data science projects, "
+                          "and technical challenges. Use the available tools to answer user questions.",
             mcp_servers={
-                "files": self.file_server,
                 "web": self.web_server,
                 "kaggle": self.kaggle_server
             },
-            #allowed_tools=["Read", "Write", "Edit", "Delete", "List", "Create", "Remove", "Fetch", "Bash", "Calculate", "Python", "Search", "Ask", "Lookup", "Summarize"],
             allowed_tools=[
-                "read_file",
-                "write_file",
-                "edit_file",
-                "delete_file",
-                "list_directory",
-                "create_directory",
-                "remove_directory",
                 "fetch_webpage",
                 "kaggle_download_dataset",
                 "kaggle_list_competitions",
@@ -92,6 +78,8 @@ class ChatAgent:
 
         self.client: Optional[ClaudeSDKClient] = None
         self._initialized = False
+        self.session_id: Optional[str] = None
+        self.total_cost: float = 0.0
         logger.info("ChatAgent initialized with file I/O, web, and Kaggle tools")
 
     async def initialize(self):
@@ -139,22 +127,19 @@ class ChatAgent:
         response_count = 0
         async for msg in self.client.receive_response():
             response_count += 1
-            logger.debug(f"[INCOMING] Message #{response_count} received: {type(msg).__name__}")
+            logger.debug(f"[INCOMING] Message #{response_count} received: {type(msg).__name__}: {msg!r}")
 
             if isinstance(msg, AssistantMessage):
-                logger.info(f"[INCOMING] AssistantMessage with {len(msg.content)} content blocks")
 
                 for idx, block in enumerate(msg.content):
                     if isinstance(block, TextBlock):
                         logger.info(f"[INCOMING] TextBlock #{idx+1}: {block.text[:100]}{'...' if len(block.text) > 100 else ''}")
-                        logger.debug(f"[INCOMING] TextBlock #{idx+1} full content: {block.text!r}")
                         yield {
                             "type": "text",
                             "content": block.text
                         }
                     elif isinstance(block, ToolUseBlock):
                         logger.info(f"[INCOMING] ToolUseBlock #{idx+1}: tool={block.name}, id={block.id}")
-                        logger.debug(f"[INCOMING] ToolUseBlock #{idx+1} full details: {block!r}")
                         yield {
                             "type": "tool_use",
                             "content": f"Using tool: {block.name}"
@@ -185,6 +170,16 @@ class ChatAgent:
                 if hasattr(msg, 'data'):
                     data = msg.data
                     if isinstance(data, dict):
+                        # Capture session_id from init message
+                        if subtype == 'init' and 'session_id' in data and not self.session_id:
+                            self.session_id = data['session_id']
+                            logger.info(f"[INCOMING] Captured session_id: {self.session_id}")
+                            # Yield session_id so UI can display it
+                            yield {
+                                "type": "session_id",
+                                "content": self.session_id
+                            }
+
                         # Log interesting system info
                         if 'session_id' in data:
                             logger.debug(f"[INCOMING] SystemMessage session_id: {data['session_id']}")
@@ -202,6 +197,26 @@ class ChatAgent:
                     else:
                         logger.debug(f"[INCOMING] SystemMessage data: {data!r}")
                 # Don't yield system messages to the user - they're internal initialization messages
+
+            elif isinstance(msg, ResultMessage):
+                logger.info(f"[INCOMING] ResultMessage: subtype={msg.subtype}, is_error={msg.is_error}")
+
+                # Extract and store total cost
+                if hasattr(msg, 'total_cost_usd'):
+                    self.total_cost = msg.total_cost_usd
+                    logger.info(f"[INCOMING] Total cost: ${self.total_cost:.4f}")
+
+                    # Yield cost information to UI
+                    yield {
+                        "type": "total_cost",
+                        "content": self.total_cost
+                    }
+
+                # Log detailed information at debug level
+                logger.debug(f"[INCOMING] ResultMessage details: duration={msg.duration_ms}ms, "
+                           f"api_duration={msg.duration_api_ms}ms, turns={msg.num_turns}")
+                if hasattr(msg, 'usage'):
+                    logger.debug(f"[INCOMING] Token usage: {msg.usage}")
 
             else:
                 logger.warning(f"[INCOMING] Unexpected message type: {type(msg).__name__}, content: {msg!r}")
