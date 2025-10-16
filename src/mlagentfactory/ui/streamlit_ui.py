@@ -5,6 +5,8 @@ import streamlit.components.v1 as components
 import asyncio
 import logging
 import sys
+import os
+from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -50,6 +52,15 @@ def initialize_session_state():
     if "total_cost" not in st.session_state:
         st.session_state.total_cost = 0.0
 
+    if "session_file_handler" not in st.session_state:
+        st.session_state.session_file_handler = None
+
+    if "live_log_container" not in st.session_state:
+        st.session_state.live_log_container = None
+
+    if "last_displayed_log_count" not in st.session_state:
+        st.session_state.last_displayed_log_count = 0
+
     if "event_loop" not in st.session_state:
         # Create a persistent event loop for the session
         try:
@@ -89,6 +100,58 @@ def setup_logging():
         streamlit_handler.setLevel(logging.DEBUG)
         root_logger.addHandler(streamlit_handler)
 
+    # Re-attach file handler if session exists (for Streamlit reruns)
+    # This is necessary because Streamlit reruns the script on each interaction
+    # and the root logger gets reset, but session_state persists
+    if "session_file_handler" in st.session_state and st.session_state.session_file_handler is not None:
+        # Check if this handler is already in the root logger
+        has_file_handler = st.session_state.session_file_handler in root_logger.handlers
+        if not has_file_handler:
+            root_logger.addHandler(st.session_state.session_file_handler)
+            logging.debug(f"Re-attached session file handler for session: {st.session_state.session_id}")
+
+
+def setup_session_file_logger(session_id: str):
+    """Set up a file logger for the current session.
+
+    Args:
+        session_id: The session ID to use for the log file name
+    """
+    # Get root logger
+    root_logger = logging.getLogger()
+
+    # Remove previous session file handler if it exists
+    if st.session_state.session_file_handler is not None:
+        logging.info(f"Closing previous session file handler")
+        root_logger.removeHandler(st.session_state.session_file_handler)
+        st.session_state.session_file_handler.close()
+        st.session_state.session_file_handler = None
+
+    # Create logs directory if it doesn't exist
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+
+    # Create new file handler for this session
+    log_file_path = logs_dir / f"session-{session_id}.log"
+    file_handler = logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
+
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    file_handler.setLevel(logging.DEBUG)
+
+    # Add to root logger
+    root_logger.addHandler(file_handler)
+
+    # Store in session state
+    st.session_state.session_file_handler = file_handler
+
+    # Log the session start
+    logging.info(f"Session file logger initialized: {log_file_path}")
+
 
 def render_chat_message(role: str, content: str):
     """Render a chat message with appropriate styling"""
@@ -114,17 +177,46 @@ def process_message_streaming(message: str):
     if not agent._initialized:
         st.session_state.event_loop.run_until_complete(agent.initialize())
 
+    # Track previous session ID to detect changes
+    previous_session_id = st.session_state.session_id
+
     # Create the async generator
     async def _stream():
         async for chunk in agent.send_message(message):
             if chunk["type"] == "text":
                 yield chunk["content"]
             elif chunk["type"] == "tool_use":
-                # Optionally show tool usage in the stream
-                yield f"\n\n*{chunk['content']}*\n\n"
+                # Show tool usage in the stream
+                yield f"\n\n*Using tool: {chunk['content']}*\n\n"
+            elif chunk["type"] == "tool_result":
+                # Show tool results in the stream
+                content = chunk["content"]
+                is_error = chunk.get("is_error", False)
+
+                if is_error:
+                    yield f"\n\nTool execution error: \n{content}\n\n"
+                else:
+                    # Format tool result content
+                    if isinstance(content, str):
+                        # Limit display length for very long results
+                        max_display_length = 1500
+                        if len(content) > max_display_length:
+                            display_content = content[:max_display_length] + "... (truncated)"
+                        else:
+                            display_content = content
+                        yield f"\n\nTool result: \n{display_content}\n\n"
+                    else:
+                        yield f"\n\nTool result: \n{content}\n\n"
+
             elif chunk["type"] == "session_id":
                 # Capture session_id in session state
-                st.session_state.session_id = chunk["content"]
+                new_session_id = chunk["content"]
+                st.session_state.session_id = new_session_id
+
+                # Set up file logger if session ID changed
+                if new_session_id != previous_session_id:
+                    setup_session_file_logger(new_session_id)
+
             elif chunk["type"] == "total_cost":
                 # Capture total_cost in session state
                 st.session_state.total_cost = chunk["content"]
@@ -146,8 +238,30 @@ async def cleanup_agent():
         st.session_state.agent = None
 
 
+@st.fragment(run_every="1s")
+def render_sidebar_stats():
+    """Render sidebar statistics that update in real-time."""
+    # Display message count
+    if st.session_state.messages:
+        st.markdown(f"**Messages:** {len(st.session_state.messages)}")
+
+    # Display log count
+    if st.session_state.log_messages:
+        st.markdown(f"**Log Entries:** {len(st.session_state.log_messages)}")
+
+    # Display session log file path
+    if st.session_state.session_id:
+        log_file_path = f"logs/session-{st.session_state.session_id}.log"
+        st.markdown(f"**Log File:** `{log_file_path}`")
+
+
+@st.fragment(run_every="1s")
 def render_logs_tab():
-    """Render the logs display tab."""
+    """Render the logs display tab.
+
+    This fragment auto-refreshes every 1 second to show real-time logs
+    even while the agent is processing messages.
+    """
     st.header("📋 Agent Logs")
 
     # Control bar
@@ -278,7 +392,7 @@ def render_logs_tab():
         """
 
         # Use components.html instead of st.markdown
-        components.html(log_html, height=650, scrolling=False)
+        components.html(log_html, height=650, scrolling=True)
 
         # Display log count
         st.caption(f"📊 Showing {len(filtered_logs)} of {len(st.session_state.log_messages)} log entries")
@@ -338,18 +452,21 @@ def main():
                     st.session_state.event_loop.run_until_complete(cleanup_agent())
                 except Exception as e:
                     st.warning(f"Cleanup warning: {e}")
+
+            # Clean up session file handler
+            if st.session_state.session_file_handler is not None:
+                root_logger = logging.getLogger()
+                root_logger.removeHandler(st.session_state.session_file_handler)
+                st.session_state.session_file_handler.close()
+                st.session_state.session_file_handler = None
+
             st.session_state.messages = []
             st.session_state.session_id = None
             st.session_state.total_cost = 0.0
             st.rerun()
 
-        # Display message count
-        if st.session_state.messages:
-            st.markdown(f"**Messages:** {len(st.session_state.messages)}")
-
-        # Display log count
-        if st.session_state.log_messages:
-            st.markdown(f"**Log Entries:** {len(st.session_state.log_messages)}")
+        # Display real-time statistics
+        render_sidebar_stats()
 
     # Create tabs
     tab1, tab2 = st.tabs(["💬 Chat", "📋 Logs"])
@@ -371,13 +488,68 @@ def main():
             # Display user message
             render_chat_message("user", prompt)
 
-            # Process with agent using streaming
-            try:
-                # Use st.write_stream for non-blocking streaming display
-                response = st.write_stream(process_message_streaming(prompt))
-            except Exception as e:
-                response = f"❌ Error: {str(e)}"
-                st.error(response)
+            # Create a status expander to show logs during processing
+            with st.status("🤖 Agent is thinking...", expanded=True) as status:
+                # Create a placeholder for live logs
+                log_placeholder = st.empty()
+
+                # Process with agent using streaming
+                try:
+                    # Track the last log count shown
+                    last_shown_log_count = len(st.session_state.log_messages)
+
+                    # Custom streaming with log updates
+                    response_chunks = []
+                    chunk_count = 0
+
+                    for chunk in process_message_streaming(prompt):
+                        response_chunks.append(chunk)
+                        chunk_count += 1
+
+                        # Update logs after every chunks
+                        current_log_count = len(st.session_state.log_messages)
+                        if current_log_count > last_shown_log_count:
+                            new_logs = st.session_state.log_messages[last_shown_log_count:current_log_count]
+                            # Show recent logs in the status
+                            with log_placeholder.container():
+                                st.caption("**Recent Activity:**")
+                                for log in new_logs[-5:]:  # Show last 5 new logs
+                                    level_emoji = {
+                                        'DEBUG': '🔍',
+                                        'INFO': 'ℹ️',
+                                        'WARNING': '⚠️',
+                                        'ERROR': '❌',
+                                        'CRITICAL': '🚨'
+                                    }.get(log['level'], '📝')
+                                    st.caption(f"{level_emoji} {log['level']}: {log['message']}")
+                            last_shown_log_count = current_log_count
+
+                    response = "".join(response_chunks)
+
+                    # Final log update
+                    current_log_count = len(st.session_state.log_messages)
+                    if current_log_count > last_shown_log_count:
+                        new_logs = st.session_state.log_messages[last_shown_log_count:current_log_count]
+                        with log_placeholder.container():
+                            st.caption("**Recent Activity:**")
+                            for log in new_logs[-5:]:
+                                level_emoji = {
+                                    'DEBUG': '🔍',
+                                    'INFO': 'ℹ️',
+                                    'WARNING': '⚠️',
+                                    'ERROR': '❌',
+                                    'CRITICAL': '🚨'
+                                }.get(log['level'], '📝')
+                                st.caption(f"{level_emoji} {log['level']}: {log['message']}")
+
+                    status.update(label="✅ Agent completed!", state="complete", expanded=False)
+                except Exception as e:
+                    response = f"❌ Error: {str(e)}"
+                    st.error(response)
+                    status.update(label="❌ Error occurred", state="error")
+
+            # Display the response
+            render_chat_message("assistant", response)
 
             # Add assistant response
             st.session_state.messages.append({

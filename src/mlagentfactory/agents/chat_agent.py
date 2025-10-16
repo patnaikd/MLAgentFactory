@@ -22,7 +22,6 @@ from ..tools import file_io_tools, web_fetch_tools, kaggle_tools
 
 logger = logging.getLogger(__name__)
 
-
 class ChatAgent:
     """A simple conversational agent that maintains conversation history."""
 
@@ -106,7 +105,12 @@ class ChatAgent:
             message: The user's message
 
         Yields:
-            Dictionary containing response chunks with 'type' and 'content' keys
+            Dictionary containing response chunks with the following types:
+            - "text": Assistant's text response (content: str)
+            - "tool_use": Tool being used (content: tool name)
+            - "tool_result": Result from tool execution (content: str/list, tool_use_id: str, is_error: bool)
+            - "session_id": Session identifier (content: str)
+            - "total_cost": Total cost in USD (content: float)
         """
         if not self.client:
             raise RuntimeError("ChatAgent must be used as an async context manager")
@@ -153,8 +157,25 @@ class ChatAgent:
                 for idx, block in enumerate(msg.content):
                     if isinstance(block, ToolResultBlock):
                         logger.info(f"[INCOMING] ToolResultBlock #{idx+1}: tool_use_id={block.tool_use_id}, is_error={block.is_error}")
-                        logger.debug(f"[INCOMING] ToolResultBlock #{idx+1} content: {block.content[:200] if isinstance(block.content, str) else block.content}")
-                        # Don't yield tool results to the user - they're internal to the agent
+
+                        # Get the content - it can be a string or list of content blocks
+                        content = block.content
+
+                        if isinstance(content, str):
+                            logger.debug(f"[INCOMING] ToolResultBlock #{idx+1} content (string): {content[:200]}{'...' if len(content) > 200 else ''}")
+                        elif isinstance(content, list):
+                            logger.debug(f"[INCOMING] ToolResultBlock #{idx+1} content (list): {len(content)} blocks")
+                        else:
+                            logger.debug(f"[INCOMING] ToolResultBlock #{idx+1} content type: {type(content).__name__}")
+
+                        # Yield tool result content to show tool execution results
+                        yield {
+                            "type": "tool_result",
+                            "content": content,
+                            "tool_use_id": block.tool_use_id,
+                            "is_error": block.is_error
+                        }
+
                     elif isinstance(block, TextBlock):
                         logger.info(f"[INCOMING] UserMessage TextBlock #{idx+1}: {block.text[:100]}{'...' if len(block.text) > 100 else ''}")
                         logger.debug(f"[INCOMING] UserMessage TextBlock #{idx+1} full content: {block.text!r}")
