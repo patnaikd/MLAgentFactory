@@ -22,6 +22,26 @@ from ..tools import file_io_tools, web_fetch_tools, kaggle_tools
 
 logger = logging.getLogger(__name__)
 
+SYSTEM_PROMPT = '''
+You are an expert machine learning engineer designed to help with coding tasks, data science projects,
+and technical challenges. Use the available tools to answer user questions.
+                
+Always think step-by-step and explain your reasoning.
+If you use a tool, explain why you are using it and what you expect to find.
+
+Guidelines:
+- Write clear, maintainable code with comments.
+- Use best practices for data science and machine learning.
+- Use Python for coding tasks. Create virtual environments if needed.
+- First create a plan before executing any code.
+- If you need to read or write files, use the file I/O tools.
+- Pick a name for the project and use it consistently.
+- Ensure all project files are saved in the project directory and subdirectories under "./workspaces/{project_name}/" consistently.
+- Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
+- Move to the next TODO once the current is complete don't wait for user response.
+'''
+
+
 class ChatAgent:
     """A simple conversational agent that maintains conversation history."""
 
@@ -56,9 +76,9 @@ class ChatAgent:
         )
 
         # Configure agent options
+    
         self.options = ClaudeAgentOptions(
-            system_prompt="You are an expert machine learning engineer designed to help with coding tasks, data science projects, "
-                          "and technical challenges. Use the available tools to answer user questions.",
+            system_prompt=SYSTEM_PROMPT,
             mcp_servers={
                 "web": self.web_server,
                 "kaggle": self.kaggle_server
@@ -109,6 +129,7 @@ class ChatAgent:
             - "text": Assistant's text response (content: str)
             - "tool_use": Tool being used (content: tool name)
             - "tool_result": Result from tool execution (content: str/list, tool_use_id: str, is_error: bool)
+            - "todo_update": TodoWrite tool usage (content: list of todos, tool_use_id: str)
             - "session_id": Session identifier (content: str)
             - "total_cost": Total cost in USD (content: float)
         """
@@ -144,6 +165,16 @@ class ChatAgent:
                         }
                     elif isinstance(block, ToolUseBlock):
                         logger.info(f"[INCOMING] ToolUseBlock #{idx+1}: tool={block.name}, id={block.id}")
+
+                        # Special handling for TodoWrite tool
+                        if block.name == "TodoWrite":
+                            logger.info(f"[INCOMING] TodoWrite tool detected with input: {block.input}")
+                            yield {
+                                "type": "todo_update",
+                                "content": block.input.get("todos", []) if hasattr(block, 'input') and block.input else [],
+                                "tool_use_id": block.id
+                            }
+
                         yield {
                             "type": "tool_use",
                             "content": f"Using tool: {block.name}"

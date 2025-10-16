@@ -61,6 +61,9 @@ def initialize_session_state():
     if "last_displayed_log_count" not in st.session_state:
         st.session_state.last_displayed_log_count = 0
 
+    if "current_todos" not in st.session_state:
+        st.session_state.current_todos = []
+
     if "event_loop" not in st.session_state:
         # Create a persistent event loop for the session
         try:
@@ -221,6 +224,10 @@ def process_message_streaming(message: str):
                 # Capture total_cost in session state
                 st.session_state.total_cost = chunk["content"]
 
+            elif chunk["type"] == "todo_update":
+                # Update the todo list in session state
+                st.session_state.current_todos = chunk["content"]
+
     # Convert async generator to sync for Streamlit
     gen = _stream()
     while True:
@@ -236,6 +243,45 @@ async def cleanup_agent():
     if st.session_state.agent:
         await st.session_state.agent.cleanup()
         st.session_state.agent = None
+
+
+def render_todo_list():
+    """Render the todo list in the sidebar."""
+    if not st.session_state.current_todos:
+        return
+
+    st.markdown("### 📋 Task Progress")
+
+    # Calculate progress
+    total_tasks = len(st.session_state.current_todos)
+    completed_tasks = sum(1 for todo in st.session_state.current_todos if todo.get("status") == "completed")
+    in_progress_tasks = sum(1 for todo in st.session_state.current_todos if todo.get("status") == "in_progress")
+
+    # Progress bar
+    progress = completed_tasks / total_tasks if total_tasks > 0 else 0
+    st.progress(progress, text=f"{completed_tasks}/{total_tasks} tasks completed")
+
+    # Display todos
+    for todo in st.session_state.current_todos:
+        status = todo.get("status", "pending")
+        content = todo.get("content", "")
+
+        # Status emoji and color
+        if status == "completed":
+            emoji = "✅"
+            style = "color: #28a745;"
+        elif status == "in_progress":
+            emoji = "🔄"
+            style = "color: #ffc107;"
+        else:  # pending
+            emoji = "⏳"
+            style = "color: #6c757d;"
+
+        # Display with markdown
+        st.markdown(f"{emoji} <span style='{style}'>{content}</span>", unsafe_allow_html=True)
+
+    # Summary
+    st.caption(f"✅ {completed_tasks} completed | 🔄 {in_progress_tasks} in progress | ⏳ {total_tasks - completed_tasks - in_progress_tasks} pending")
 
 
 @st.fragment(run_every="1s")
@@ -463,10 +509,16 @@ def main():
             st.session_state.messages = []
             st.session_state.session_id = None
             st.session_state.total_cost = 0.0
+            st.session_state.current_todos = []
             st.rerun()
 
         # Display real-time statistics
         render_sidebar_stats()
+
+        st.markdown("---")
+
+        # Display todo list if there are any todos
+        render_todo_list()
 
     # Create tabs
     tab1, tab2 = st.tabs(["💬 Chat", "📋 Logs"])
