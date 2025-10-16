@@ -190,26 +190,56 @@ def process_message_streaming(message: str):
                 yield chunk["content"]
             elif chunk["type"] == "tool_use":
                 # Show tool usage in the stream
-                yield f"\n\n*Using tool: {chunk['content']}*\n\n"
+                tool_display = chunk["content"]
+                tool_name = chunk.get("tool_name", "")
+                tool_input = chunk.get("tool_input", {})
+
+                # Special display for Bash commands
+                if tool_name == "Bash" and tool_input:
+                    command = tool_input.get("command", "")
+                    description = tool_input.get("description", "")
+
+                    if description:
+                        yield f"\n\n**🔨 {description}**\n```bash\n{command}\n```\n\n"
+                    else:
+                        yield f"\n\n**🔨 Running bash command:**\n```bash\n{command}\n```\n\n"
+                else:
+                    # Default tool display
+                    yield f"\n\n*{tool_display}*\n\n"
             elif chunk["type"] == "tool_result":
-                # Show tool results in the stream
+                # Show tool results in code blocks
                 content = chunk["content"]
                 is_error = chunk.get("is_error", False)
 
                 if is_error:
-                    yield f"\n\nTool execution error: \n{content}\n\n"
+                    # Display errors in a code block with error prefix
+                    yield f"\n\n**⚠️ Tool Execution Error:**\n```\n{content}\n```\n\n"
                 else:
-                    # Format tool result content
+                    # Format tool result content in code blocks
                     if isinstance(content, str):
                         # Limit display length for very long results
-                        max_display_length = 1500
+                        max_display_length = 2000
                         if len(content) > max_display_length:
-                            display_content = content[:max_display_length] + "... (truncated)"
+                            display_content = content[:max_display_length] + "\n... (truncated)"
                         else:
                             display_content = content
-                        yield f"\n\nTool result: \n{display_content}\n\n"
+
+                        # Try to detect content type for syntax highlighting
+                        if display_content.strip().startswith('{') or display_content.strip().startswith('['):
+                            # Looks like JSON
+                            yield f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n"
+                        elif display_content.strip().startswith('<'):
+                            # Looks like HTML/XML
+                            yield f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n"
+                        else:
+                            # Plain text
+                            yield f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n"
+                    elif isinstance(content, list):
+                        # Format list content
+                        yield f"\n\n**🔧 Tool Result:** ({len(content)} items)\n```json\n{content}\n```\n\n"
                     else:
-                        yield f"\n\nTool result: \n{content}\n\n"
+                        # Other types
+                        yield f"\n\n**🔧 Tool Result:**\n```\n{str(content)}\n```\n\n"
 
             elif chunk["type"] == "session_id":
                 # Capture session_id in session state

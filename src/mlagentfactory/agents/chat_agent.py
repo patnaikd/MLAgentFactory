@@ -30,15 +30,20 @@ Always think step-by-step and explain your reasoning.
 If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
+- Pick a name for the project and use it consistently.
+- Ensure all project files are saved in the project directory and subdirectories under "./workspace/{project_name}/" consistently.
+- First create a plan before executing any code.
+- Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
+- Use Python for coding tasks. Create virtual environments if needed.
 - Write clear, maintainable code with comments.
 - Use best practices for data science and machine learning.
-- Use Python for coding tasks. Create virtual environments if needed.
-- First create a plan before executing any code.
-- If you need to read or write files, use the file I/O tools.
-- Pick a name for the project and use it consistently.
-- Ensure all project files are saved in the project directory and subdirectories under "./workspaces/{project_name}/" consistently.
-- Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
 - Move to the next TODO once the current is complete don't wait for user response.
+- Prefer using the TodoWrite tool to update the todo list instead of writing it out in text.
+- Prefer using the FileWrite tool to create or update files instead of writing out file contents in text.
+- Prefer using PyTorch for deep learning tasks. Use TensorFlow only if absolutely necessary.
+- Use XGBoost or LightGBM for tabular data tasks.
+- Use pandas for data manipulation and analysis.
+- Use matplotlib or seaborn for visualizations.
 '''
 
 
@@ -127,7 +132,7 @@ class ChatAgent:
         Yields:
             Dictionary containing response chunks with the following types:
             - "text": Assistant's text response (content: str)
-            - "tool_use": Tool being used (content: tool name)
+            - "tool_use": Tool being used (content: display text, tool_name: str, tool_input: dict, tool_use_id: str)
             - "tool_result": Result from tool execution (content: str/list, tool_use_id: str, is_error: bool)
             - "todo_update": TodoWrite tool usage (content: list of todos, tool_use_id: str)
             - "session_id": Session identifier (content: str)
@@ -175,9 +180,29 @@ class ChatAgent:
                                 "tool_use_id": block.id
                             }
 
+                        # Extract tool details for display
+                        tool_display = f"Using tool: {block.name}"
+                        tool_input = {}
+
+                        # Special handling for Bash tool - include command
+                        if block.name == "Bash" and hasattr(block, 'input') and block.input:
+                            command = block.input.get("command", "")
+                            description = block.input.get("description", "")
+                            tool_input = {"command": command, "description": description}
+
+                            if description:
+                                tool_display = f"Running: {description}"
+                            else:
+                                tool_display = f"Running bash command"
+
+                            logger.info(f"[INCOMING] Bash command: {command}")
+
                         yield {
                             "type": "tool_use",
-                            "content": f"Using tool: {block.name}"
+                            "content": tool_display,
+                            "tool_name": block.name,
+                            "tool_input": tool_input,
+                            "tool_use_id": block.id
                         }
                     else:
                         logger.warning(f"[INCOMING] Unknown block type #{idx+1}: {type(block).__name__}")
