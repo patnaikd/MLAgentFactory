@@ -30,8 +30,9 @@ Always think step-by-step and explain your reasoning.
 If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
-- Pick a name for the project and use it consistently.
+- Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>yyyy-mm-dd_HH-MM-SS. and use it consistently.
 - Ensure all project files are saved in the project directory and subdirectories under "./workspace/{project_name}/" consistently.
+- If project directory exists, create a new folder with a unique name by adding a date-time suffix.
 - First create a plan before executing any code.
 - Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
 - Use Python for coding tasks. Create virtual environments if needed.
@@ -133,6 +134,7 @@ class ChatAgent:
             Dictionary containing response chunks with the following types:
             - "text": Assistant's text response (content: str)
             - "tool_use": Tool being used (content: display text, tool_name: str, tool_input: dict, tool_use_id: str)
+              - tool_input may contain: command/description (Bash), file_path (Write/Read/Edit/Delete)
             - "tool_result": Result from tool execution (content: str/list, tool_use_id: str, is_error: bool)
             - "todo_update": TodoWrite tool usage (content: list of todos, tool_use_id: str)
             - "session_id": Session identifier (content: str)
@@ -196,6 +198,14 @@ class ChatAgent:
                                 tool_display = f"Running bash command"
 
                             logger.info(f"[INCOMING] Bash command: {command}")
+
+                        # Special handling for file operation tools - extract file_path
+                        file_operation_tools = ["Write", "Read", "Edit", "Delete"]
+                        if block.name in file_operation_tools and hasattr(block, 'input') and block.input:
+                            file_path = block.input.get("file_path", "")
+                            if file_path:
+                                tool_input["file_path"] = file_path
+                                logger.info(f"[INCOMING] {block.name} tool file_path: {file_path}")
 
                         yield {
                             "type": "tool_use",

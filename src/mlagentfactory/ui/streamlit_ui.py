@@ -169,103 +169,138 @@ def get_or_create_agent():
     return st.session_state.agent
 
 
-def process_message_streaming(message: str):
+async def process_message_streaming(message: str):
     """Process a message through the agent with streaming response.
 
-    Yields response chunks as they arrive synchronously.
+    Yields response chunks as they arrive asynchronously.
     """
     agent = get_or_create_agent()
 
     # Initialize if not already initialized
     if not agent._initialized:
-        st.session_state.event_loop.run_until_complete(agent.initialize())
+        await agent.initialize()
 
     # Track previous session ID to detect changes
     previous_session_id = st.session_state.session_id
 
-    # Create the async generator
-    async def _stream():
-        async for chunk in agent.send_message(message):
-            if chunk["type"] == "text":
-                yield chunk["content"]
-            elif chunk["type"] == "tool_use":
-                # Show tool usage in the stream
-                tool_display = chunk["content"]
-                tool_name = chunk.get("tool_name", "")
-                tool_input = chunk.get("tool_input", {})
+    # Stream chunks from the agent
+    async for chunk in agent.send_message(message):
+        if chunk["type"] == "text":
+            yield chunk["content"]
+        elif chunk["type"] == "tool_use":
+            # Show tool usage in the stream
+            tool_display = chunk["content"]
+            tool_name = chunk.get("tool_name", "")
+            tool_input = chunk.get("tool_input", {})
 
-                # Special display for Bash commands
-                if tool_name == "Bash" and tool_input:
-                    command = tool_input.get("command", "")
-                    description = tool_input.get("description", "")
+            # Special display for Bash commands
+            if tool_name == "Bash" and tool_input:
+                command = tool_input.get("command", "")
+                description = tool_input.get("description", "")
 
-                    if description:
-                        yield f"\n\n**🔨 {description}**\n```bash\n{command}\n```\n\n"
-                    else:
-                        yield f"\n\n**🔨 Running bash command:**\n```bash\n{command}\n```\n\n"
+                if description:
+                    yield f"\n\n**🔨 {description}**\n```bash\n{command}\n```\n\n"
                 else:
-                    # Default tool display
-                    yield f"\n\n*{tool_display}*\n\n"
-            elif chunk["type"] == "tool_result":
-                # Show tool results in code blocks
-                content = chunk["content"]
-                is_error = chunk.get("is_error", False)
+                    yield f"\n\n**🔨 Running bash command:**\n```bash\n{command}\n```\n\n"
+            # Special display for file operation tools
+            elif tool_name in ["Write", "Read", "Edit", "Delete"] and tool_input:
+                file_path = tool_input.get("file_path", "")
 
-                if is_error:
-                    # Display errors in a code block with error prefix
-                    yield f"\n\n**⚠️ Tool Execution Error:**\n```\n{content}\n```\n\n"
+                # Map tool names to emojis
+                tool_emoji = {
+                    "Write": "📝",
+                    "Read": "👁️",
+                    "Edit": "✏️",
+                    "Delete": "🗑️"
+                }
+                emoji = tool_emoji.get(tool_name, "📄")
+
+                if file_path:
+                    yield f"\n\n**{emoji} {tool_name}: `{file_path}`**\n\n"
                 else:
-                    # Format tool result content in code blocks
-                    if isinstance(content, str):
-                        # Limit display length for very long results
-                        max_display_length = 2000
-                        if len(content) > max_display_length:
-                            display_content = content[:max_display_length] + "\n... (truncated)"
-                        else:
-                            display_content = content
+                    yield f"\n\n**{emoji} {tool_name}**\n\n"
+            else:
+                # Default tool display
+                yield f"\n\n*{tool_display}*\n\n"
+        elif chunk["type"] == "tool_result":
+            # Show tool results in code blocks
+            content = chunk["content"]
+            is_error = chunk.get("is_error", False)
 
-                        # Try to detect content type for syntax highlighting
-                        if display_content.strip().startswith('{') or display_content.strip().startswith('['):
-                            # Looks like JSON
-                            yield f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n"
-                        elif display_content.strip().startswith('<'):
-                            # Looks like HTML/XML
-                            yield f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n"
-                        else:
-                            # Plain text
-                            yield f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n"
-                    elif isinstance(content, list):
-                        # Format list content
-                        yield f"\n\n**🔧 Tool Result:** ({len(content)} items)\n```json\n{content}\n```\n\n"
+            if is_error:
+                # Display errors in a code block with error prefix
+                yield f"\n\n**⚠️ Tool Execution Error:**\n```\n{content}\n```\n\n"
+            else:
+                # Format tool result content in code blocks
+                if isinstance(content, str):
+                    # Limit display length for very long results
+                    max_display_length = 2000
+                    if len(content) > max_display_length:
+                        display_content = content[:max_display_length] + "\n... (truncated)"
                     else:
-                        # Other types
-                        yield f"\n\n**🔧 Tool Result:**\n```\n{str(content)}\n```\n\n"
+                        display_content = content
 
-            elif chunk["type"] == "session_id":
-                # Capture session_id in session state
-                new_session_id = chunk["content"]
-                st.session_state.session_id = new_session_id
+                    # Try to detect content type for syntax highlighting
+                    if display_content.strip().startswith('{') or display_content.strip().startswith('['):
+                        # Looks like JSON
+                        yield f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n"
+                    elif display_content.strip().startswith('<'):
+                        # Looks like HTML/XML
+                        yield f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n"
+                    else:
+                        # Plain text
+                        yield f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n"
+                elif isinstance(content, list):
+                    # Format list content
+                    yield f"\n\n**🔧 Tool Result:** ({len(content)} items)\n```json\n{content}\n```\n\n"
+                else:
+                    # Other types
+                    yield f"\n\n**🔧 Tool Result:**\n```\n{str(content)}\n```\n\n"
 
-                # Set up file logger if session ID changed
-                if new_session_id != previous_session_id:
-                    setup_session_file_logger(new_session_id)
+        elif chunk["type"] == "session_id":
+            # Capture session_id in session state
+            new_session_id = chunk["content"]
+            st.session_state.session_id = new_session_id
 
-            elif chunk["type"] == "total_cost":
-                # Capture total_cost in session state
-                st.session_state.total_cost = chunk["content"]
+            # Set up file logger if session ID changed
+            if new_session_id != previous_session_id:
+                setup_session_file_logger(new_session_id)
 
-            elif chunk["type"] == "todo_update":
-                # Update the todo list in session state
-                st.session_state.current_todos = chunk["content"]
+        elif chunk["type"] == "total_cost":
+            # Capture total_cost in session state
+            st.session_state.total_cost = chunk["content"]
 
-    # Convert async generator to sync for Streamlit
-    gen = _stream()
-    while True:
+        elif chunk["type"] == "todo_update":
+            # Update the todo list in session state
+            st.session_state.current_todos = chunk["content"]
+
+
+def run_async_generator(async_gen):
+    """Helper to run async generator in event loop with minimal blocking.
+
+    Yields items from async generator using the session event loop.
+    This still uses run_until_complete but allows the async code to run
+    properly with await statements. The async nature ensures that I/O operations
+    don't block unnecessarily.
+    """
+    loop = st.session_state.event_loop
+
+    async def get_next_chunk():
+        """Async helper to get next chunk with periodic yields."""
         try:
-            chunk = st.session_state.event_loop.run_until_complete(gen.__anext__())
-            yield chunk
+            chunk = await async_gen.__anext__()
+            # Small async sleep to allow other tasks to run
+            await asyncio.sleep(0.001)  # 1ms yield point
+            return chunk
         except StopAsyncIteration:
+            return None
+
+    while True:
+        # Run the async operation - this is more efficient than running sync code
+        chunk = loop.run_until_complete(get_next_chunk())
+        if chunk is None:
             break
+        yield chunk
 
 
 async def cleanup_agent():
@@ -584,7 +619,9 @@ def main():
                     response_chunks = []
                     chunk_count = 0
 
-                    for chunk in process_message_streaming(prompt):
+                    # Create async generator and wrap it
+                    async_gen = process_message_streaming(prompt)
+                    for chunk in run_async_generator(async_gen):
                         response_chunks.append(chunk)
                         chunk_count += 1
 
