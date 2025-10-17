@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+from threading import Thread
+from queue import Queue, Empty
 
 from ..agents.chat_agent import ChatAgent
 from ..utils.logging_config import initialize_observability
@@ -76,12 +78,31 @@ def initialize_session_state():
             asyncio.set_event_loop(loop)
         st.session_state.event_loop = loop
 
+    if "background_thread" not in st.session_state:
+        st.session_state.background_thread = None
+
+    if "chunk_queue" not in st.session_state:
+        st.session_state.chunk_queue = None
+
+    if "is_processing" not in st.session_state:
+        st.session_state.is_processing = False
+
+    if "current_response" not in st.session_state:
+        st.session_state.current_response = ""
+
+    if "processing_error" not in st.session_state:
+        st.session_state.processing_error = None
+
 
 def setup_logging():
-    """Configure logging with custom handler for Streamlit."""
-    # Create formatter
+    """Configure logging with custom handler for Streamlit.
+
+    Uses the same formatter as console logging for consistency, which includes
+    filename and line number for easier debugging.
+    """
+    # Create formatter - same as console formatter in logging_config.py
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
@@ -111,7 +132,7 @@ def setup_logging():
         has_file_handler = st.session_state.session_file_handler in root_logger.handlers
         if not has_file_handler:
             root_logger.addHandler(st.session_state.session_file_handler)
-            logging.debug(f"Re-attached session file handler for session: {st.session_state.session_id}")
+            # Don't log on every rerun - too noisy during processing loops
 
 
 def setup_session_file_logger(session_id: str):
@@ -138,9 +159,9 @@ def setup_session_file_logger(session_id: str):
     log_file_path = logs_dir / f"session-{session_id}.log"
     file_handler = logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
 
-    # Create formatter
+    # Create formatter - same as console formatter in logging_config.py
     formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     file_handler.setFormatter(formatter)
@@ -169,24 +190,31 @@ def get_or_create_agent():
     return st.session_state.agent
 
 
-async def process_message_streaming(message: str):
+async def process_message_streaming(message: str, agent, previous_session_id):
     """Process a message through the agent with streaming response.
 
     Yields response chunks as they arrive asynchronously.
-    """
-    agent = get_or_create_agent()
+    This function should NOT access st.session_state directly to avoid
+    ScriptRunContext issues when running in a background thread.
 
+    Args:
+        message: The message to process
+        agent: The ChatAgent instance
+        previous_session_id: The previous session ID for tracking changes
+
+    Yields:
+        tuple: (chunk_type, content) where chunk_type is one of:
+            - "text": Display text content
+            - "metadata": Metadata updates (session_id, total_cost, todo_update)
+    """
     # Initialize if not already initialized
     if not agent._initialized:
         await agent.initialize()
 
-    # Track previous session ID to detect changes
-    previous_session_id = st.session_state.session_id
-
     # Stream chunks from the agent
     async for chunk in agent.send_message(message):
         if chunk["type"] == "text":
-            yield chunk["content"]
+            yield ("text", chunk["content"])
         elif chunk["type"] == "tool_use":
             # Show tool usage in the stream
             tool_display = chunk["content"]
@@ -199,9 +227,9 @@ async def process_message_streaming(message: str):
                 description = tool_input.get("description", "")
 
                 if description:
-                    yield f"\n\n**🔨 {description}**\n```bash\n{command}\n```\n\n"
+                    yield ("text", f"\n\n**🔨 {description}**\n```bash\n{command}\n```\n\n")
                 else:
-                    yield f"\n\n**🔨 Running bash command:**\n```bash\n{command}\n```\n\n"
+                    yield ("text", f"\n\n**🔨 Running bash command:**\n```bash\n{command}\n```\n\n")
             # Special display for file operation tools
             elif tool_name in ["Write", "Read", "Edit", "Delete"] and tool_input:
                 file_path = tool_input.get("file_path", "")
@@ -216,12 +244,12 @@ async def process_message_streaming(message: str):
                 emoji = tool_emoji.get(tool_name, "📄")
 
                 if file_path:
-                    yield f"\n\n**{emoji} {tool_name}: `{file_path}`**\n\n"
+                    yield ("text", f"\n\n**{emoji} {tool_name}: `{file_path}`**\n\n")
                 else:
-                    yield f"\n\n**{emoji} {tool_name}**\n\n"
+                    yield ("text", f"\n\n**{emoji} {tool_name}**\n\n")
             else:
                 # Default tool display
-                yield f"\n\n*{tool_display}*\n\n"
+                yield ("text", f"\n\n*{tool_display}*\n\n")
         elif chunk["type"] == "tool_result":
             # Show tool results in code blocks
             content = chunk["content"]
@@ -229,7 +257,7 @@ async def process_message_streaming(message: str):
 
             if is_error:
                 # Display errors in a code block with error prefix
-                yield f"\n\n**⚠️ Tool Execution Error:**\n```\n{content}\n```\n\n"
+                yield ("text", f"\n\n**⚠️ Tool Execution Error:**\n```\n{content}\n```\n\n")
             else:
                 # Format tool result content in code blocks
                 if isinstance(content, str):
@@ -243,64 +271,98 @@ async def process_message_streaming(message: str):
                     # Try to detect content type for syntax highlighting
                     if display_content.strip().startswith('{') or display_content.strip().startswith('['):
                         # Looks like JSON
-                        yield f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n"
+                        yield ("text", f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n")
                     elif display_content.strip().startswith('<'):
                         # Looks like HTML/XML
-                        yield f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n"
+                        yield ("text", f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n")
                     else:
                         # Plain text
-                        yield f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n"
+                        yield ("text", f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n")
                 elif isinstance(content, list):
                     # Format list content
-                    yield f"\n\n**🔧 Tool Result:** ({len(content)} items)\n```json\n{content}\n```\n\n"
+                    yield ("text", f"\n\n**🔧 Tool Result:** ({len(content)} items)\n```json\n{content}\n```\n\n")
                 else:
                     # Other types
-                    yield f"\n\n**🔧 Tool Result:**\n```\n{str(content)}\n```\n\n"
+                    yield ("text", f"\n\n**🔧 Tool Result:**\n```\n{str(content)}\n```\n\n")
 
         elif chunk["type"] == "session_id":
-            # Capture session_id in session state
+            # Pass session_id as metadata to be handled by main thread
             new_session_id = chunk["content"]
-            st.session_state.session_id = new_session_id
-
-            # Set up file logger if session ID changed
-            if new_session_id != previous_session_id:
-                setup_session_file_logger(new_session_id)
+            yield ("metadata", {
+                "type": "session_id",
+                "content": new_session_id,
+                "previous_session_id": previous_session_id
+            })
 
         elif chunk["type"] == "total_cost":
-            # Capture total_cost in session state
-            st.session_state.total_cost = chunk["content"]
+            # Pass total_cost as metadata to be handled by main thread
+            yield ("metadata", {
+                "type": "total_cost",
+                "content": chunk["content"]
+            })
 
         elif chunk["type"] == "todo_update":
-            # Update the todo list in session state
-            st.session_state.current_todos = chunk["content"]
+            # Pass todo_update as metadata to be handled by main thread
+            yield ("metadata", {
+                "type": "todo_update",
+                "content": chunk["content"]
+            })
 
 
-def run_async_generator(async_gen):
-    """Helper to run async generator in event loop with minimal blocking.
+def start_background_processing(async_gen):
+    """Start processing async generator in a background thread.
 
-    Yields items from async generator using the session event loop.
-    This still uses run_until_complete but allows the async code to run
-    properly with await statements. The async nature ensures that I/O operations
-    don't block unnecessarily.
+    This function starts the background processing and returns immediately,
+    allowing the Streamlit UI to remain unblocked. Chunks are placed in a queue
+    that can be polled by the UI.
+
+    Args:
+        async_gen: The async generator to process
     """
-    loop = st.session_state.event_loop
+    # Create a queue to pass chunks from the thread to the main thread
+    chunk_queue = Queue()
+    exception_holder = [None]  # Use list to hold exception from thread
 
-    async def get_next_chunk():
-        """Async helper to get next chunk with periodic yields."""
+    def run_in_thread():
+        """Run the async generator in a separate thread with its own event loop."""
         try:
-            chunk = await async_gen.__anext__()
-            # Small async sleep to allow other tasks to run
-            await asyncio.sleep(0.001)  # 1ms yield point
-            return chunk
-        except StopAsyncIteration:
-            return None
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-    while True:
-        # Run the async operation - this is more efficient than running sync code
-        chunk = loop.run_until_complete(get_next_chunk())
-        if chunk is None:
-            break
-        yield chunk
+            async def consume_generator():
+                """Consume the async generator and put chunks in the queue."""
+                try:
+                    async for chunk_type, content in async_gen:
+                        chunk_queue.put((chunk_type, content))
+                        # Small yield point to allow other async tasks
+                        await asyncio.sleep(0.001)
+                except Exception as e:
+                    exception_holder[0] = e
+                    chunk_queue.put(("error", str(e)))
+                finally:
+                    # Signal completion
+                    chunk_queue.put(("done", None))
+
+            # Run the async generator
+            loop.run_until_complete(consume_generator())
+        except Exception as e:
+            exception_holder[0] = e
+            chunk_queue.put(("error", str(e)))
+            chunk_queue.put(("done", None))
+        finally:
+            loop.close()
+
+    # Start the background thread
+    thread = Thread(target=run_in_thread, daemon=True)
+    thread.start()
+
+    # Store in session state
+    st.session_state.background_thread = thread
+    st.session_state.chunk_queue = chunk_queue
+    st.session_state.is_processing = True
+    st.session_state.current_response = ""
+    st.session_state.processing_error = None
 
 
 async def cleanup_agent():
@@ -310,8 +372,13 @@ async def cleanup_agent():
         st.session_state.agent = None
 
 
+@st.fragment(run_every="0.5s")
 def render_todo_list():
-    """Render the todo list in the sidebar."""
+    """Render the todo list in the sidebar with auto-refresh.
+
+    This fragment auto-refreshes every 500ms to show todo updates in real-time
+    as the agent processes tasks.
+    """
     if not st.session_state.current_todos:
         return
 
@@ -347,6 +414,97 @@ def render_todo_list():
 
     # Summary
     st.caption(f"✅ {completed_tasks} completed | 🔄 {in_progress_tasks} in progress | ⏳ {total_tasks - completed_tasks - in_progress_tasks} pending")
+
+
+def poll_and_update_chunks():
+    """Poll the background queue and update session state.
+
+    This is called from within a fragment to process chunks without blocking.
+    Must be called from the main Streamlit thread.
+    """
+    if not st.session_state.is_processing:
+        return False
+
+    chunk_queue = st.session_state.chunk_queue
+    if chunk_queue is None:
+        return False
+
+    # Process all available chunks without blocking
+    chunks_processed = 0
+    max_chunks_per_poll = 10  # Process up to 10 chunks per poll to avoid blocking too long
+    any_updates = False
+
+    while chunks_processed < max_chunks_per_poll:
+        try:
+            # Non-blocking get
+            msg_type, content = chunk_queue.get_nowait()
+            any_updates = True
+
+            if msg_type == "text":
+                # Append text chunk to current response
+                st.session_state.current_response += content
+                chunks_processed += 1
+
+            elif msg_type == "metadata":
+                # Handle metadata updates (session_id, total_cost, todo_update)
+                metadata_type = content.get("type")
+
+                if metadata_type == "session_id":
+                    new_session_id = content.get("content")
+                    previous_session_id = content.get("previous_session_id")
+                    st.session_state.session_id = new_session_id
+
+                    # Set up file logger if session ID changed
+                    if new_session_id != previous_session_id:
+                        setup_session_file_logger(new_session_id)
+
+                elif metadata_type == "total_cost":
+                    st.session_state.total_cost = content.get("content")
+
+                elif metadata_type == "todo_update":
+                    todos = content.get("content")
+                    st.session_state.current_todos = todos
+                    logging.debug(f"Updated current_todos in session state: {len(todos) if todos else 0} todos")
+
+            elif msg_type == "error":
+                # Store error
+                st.session_state.processing_error = content
+                st.session_state.is_processing = False
+                break
+
+            elif msg_type == "done":
+                # Processing complete
+                st.session_state.is_processing = False
+                break
+
+        except Empty:
+            # No more chunks available right now
+            break
+
+    return any_updates
+
+
+@st.fragment(run_every="0.1s")
+def render_streaming_response():
+    """Render the streaming response with auto-refresh.
+
+    This fragment auto-refreshes every 100ms to poll for new chunks
+    and display them in real-time without blocking the main thread.
+    """
+    if not st.session_state.is_processing:
+        return
+
+    # Poll for new chunks (non-blocking)
+    poll_and_update_chunks()
+
+    # Show the current response as it streams in
+    if st.session_state.current_response:
+        with st.chat_message("assistant"):
+            st.markdown(st.session_state.current_response)
+
+    # Show status
+    with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
+        st.caption("Processing your request...")
 
 
 @st.fragment(run_every="1s")
@@ -593,91 +751,59 @@ def main():
         for message in st.session_state.messages:
             render_chat_message(message["role"], message["content"])
 
-        # Chat input
-        if prompt := st.chat_input("Type your message here..."):
-            # Add user message
-            st.session_state.messages.append({
-                "role": "user",
-                "content": prompt,
-                "timestamp": datetime.now()
-            })
+        # If processing, render the streaming response (auto-refreshing fragment)
+        if st.session_state.is_processing:
+            render_streaming_response()
 
-            # Display user message
-            render_chat_message("user", prompt)
-
-            # Create a status expander to show logs during processing
-            with st.status("🤖 Agent is thinking...", expanded=True) as status:
-                # Create a placeholder for live logs
-                log_placeholder = st.empty()
-
-                # Process with agent using streaming
-                try:
-                    # Track the last log count shown
-                    last_shown_log_count = len(st.session_state.log_messages)
-
-                    # Custom streaming with log updates
-                    response_chunks = []
-                    chunk_count = 0
-
-                    # Create async generator and wrap it
-                    async_gen = process_message_streaming(prompt)
-                    for chunk in run_async_generator(async_gen):
-                        response_chunks.append(chunk)
-                        chunk_count += 1
-
-                        # Update logs after every chunks
-                        current_log_count = len(st.session_state.log_messages)
-                        if current_log_count > last_shown_log_count:
-                            new_logs = st.session_state.log_messages[last_shown_log_count:current_log_count]
-                            # Show recent logs in the status
-                            with log_placeholder.container():
-                                st.caption("**Recent Activity:**")
-                                for log in new_logs[-5:]:  # Show last 5 new logs
-                                    level_emoji = {
-                                        'DEBUG': '🔍',
-                                        'INFO': 'ℹ️',
-                                        'WARNING': '⚠️',
-                                        'ERROR': '❌',
-                                        'CRITICAL': '🚨'
-                                    }.get(log['level'], '📝')
-                                    st.caption(f"{level_emoji} {log['level']}: {log['message']}")
-                            last_shown_log_count = current_log_count
-
-                    response = "".join(response_chunks)
-
-                    # Final log update
-                    current_log_count = len(st.session_state.log_messages)
-                    if current_log_count > last_shown_log_count:
-                        new_logs = st.session_state.log_messages[last_shown_log_count:current_log_count]
-                        with log_placeholder.container():
-                            st.caption("**Recent Activity:**")
-                            for log in new_logs[-5:]:
-                                level_emoji = {
-                                    'DEBUG': '🔍',
-                                    'INFO': 'ℹ️',
-                                    'WARNING': '⚠️',
-                                    'ERROR': '❌',
-                                    'CRITICAL': '🚨'
-                                }.get(log['level'], '📝')
-                                st.caption(f"{level_emoji} {log['level']}: {log['message']}")
-
-                    status.update(label="✅ Agent completed!", state="complete", expanded=False)
-                except Exception as e:
-                    response = f"❌ Error: {str(e)}"
+        # If just completed processing, finalize the response
+        if st.session_state.current_response and not st.session_state.is_processing:
+            # Check if we need to finalize (response not yet in messages)
+            if not st.session_state.messages or st.session_state.messages[-1]["content"] != st.session_state.current_response:
+                # Handle errors
+                if st.session_state.processing_error:
+                    response = f"❌ Error: {st.session_state.processing_error}"
                     st.error(response)
-                    status.update(label="❌ Error occurred", state="error")
+                else:
+                    response = st.session_state.current_response
 
-            # Display the response
-            render_chat_message("assistant", response)
+                # Add assistant response to session state
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response,
+                    "timestamp": datetime.now()
+                })
 
-            # Add assistant response
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": response,
-                "timestamp": datetime.now()
-            })
+                # Clear processing state
+                st.session_state.current_response = ""
+                st.session_state.processing_error = None
+                st.session_state.chunk_queue = None
+                st.session_state.background_thread = None
 
-            st.rerun()
+                st.rerun()
+
+        # Chat input - only accept input if not currently processing
+        if not st.session_state.is_processing:
+            if prompt := st.chat_input("Type your message here..."):
+                # Add user message
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": prompt,
+                    "timestamp": datetime.now()
+                })
+
+                # Get agent and session ID from main thread before starting background processing
+                agent = get_or_create_agent()
+                previous_session_id = st.session_state.session_id
+
+                # Start background processing (non-blocking)
+                async_gen = process_message_streaming(prompt, agent, previous_session_id)
+                start_background_processing(async_gen)
+
+                # Trigger rerun to start rendering the fragment
+                st.rerun()
+        else:
+            # Show disabled input while processing
+            st.chat_input("Agent is processing...", disabled=True)
 
     with tab2:
         render_logs_tab()
