@@ -31,7 +31,7 @@ If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
 - Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>yyyy-mm-dd_HH-MM-SS. and use it consistently.
-- Ensure all project files are saved in the project directory and subdirectories under "./workspace/{project_name}/" consistently.
+- Ensure all project files are saved in the project directory and subdirectories under "{current directory}/workspace/{project_name}/" consistently. Always use absolute path when referring to files.
 - If project directory exists, create a new folder with a unique name by adding a date-time suffix.
 - First create a plan before executing any code.
 - Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.

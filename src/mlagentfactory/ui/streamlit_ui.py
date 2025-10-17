@@ -6,6 +6,7 @@ import asyncio
 import logging
 import sys
 import os
+import time
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -484,29 +485,6 @@ def poll_and_update_chunks():
     return any_updates
 
 
-@st.fragment(run_every="0.1s")
-def render_streaming_response():
-    """Render the streaming response with auto-refresh.
-
-    This fragment auto-refreshes every 100ms to poll for new chunks
-    and display them in real-time without blocking the main thread.
-    """
-    if not st.session_state.is_processing:
-        return
-
-    # Poll for new chunks (non-blocking)
-    poll_and_update_chunks()
-
-    # Show the current response as it streams in
-    if st.session_state.current_response:
-        with st.chat_message("assistant"):
-            st.markdown(st.session_state.current_response)
-
-    # Show status
-    with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
-        st.caption("Processing your request...")
-
-
 @st.fragment(run_every="1s")
 def render_sidebar_stats():
     """Render sidebar statistics that update in real-time."""
@@ -751,12 +729,50 @@ def main():
         for message in st.session_state.messages:
             render_chat_message(message["role"], message["content"])
 
-        # If processing, render the streaming response (auto-refreshing fragment)
+        # Chat input - only accept input if not currently processing
+        if not st.session_state.is_processing:
+            if prompt := st.chat_input("Type your message here..."):
+                # Add user message
+                st.session_state.messages.append({
+                    "role": "user",
+                    "content": prompt,
+                    "timestamp": datetime.now()
+                })
+
+                # Get agent and session ID from main thread before starting background processing
+                agent = get_or_create_agent()
+                previous_session_id = st.session_state.session_id
+
+                # Start background processing (non-blocking)
+                async_gen = process_message_streaming(prompt, agent, previous_session_id)
+                start_background_processing(async_gen)
+
+                # Trigger rerun to start polling
+                st.rerun()
+        else:
+            # Show disabled input while processing
+            st.chat_input("Agent is processing...", disabled=True)
+
+        # If processing, show the streaming response
         if st.session_state.is_processing:
-            render_streaming_response()
+            # Poll for new chunks (non-blocking)
+            poll_and_update_chunks()
+
+            # Show the current response as it streams in
+            if st.session_state.current_response:
+                with st.chat_message("assistant"):
+                    st.markdown(st.session_state.current_response)
+
+            # Show status
+            with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
+                st.caption("Processing your request...")
+
+            # Auto-refresh to keep polling
+            time.sleep(0.1)
+            st.rerun()
 
         # If just completed processing, finalize the response
-        if st.session_state.current_response and not st.session_state.is_processing:
+        elif st.session_state.current_response and not st.session_state.is_processing:
             # Check if we need to finalize (response not yet in messages)
             if not st.session_state.messages or st.session_state.messages[-1]["content"] != st.session_state.current_response:
                 # Handle errors
@@ -780,30 +796,6 @@ def main():
                 st.session_state.background_thread = None
 
                 st.rerun()
-
-        # Chat input - only accept input if not currently processing
-        if not st.session_state.is_processing:
-            if prompt := st.chat_input("Type your message here..."):
-                # Add user message
-                st.session_state.messages.append({
-                    "role": "user",
-                    "content": prompt,
-                    "timestamp": datetime.now()
-                })
-
-                # Get agent and session ID from main thread before starting background processing
-                agent = get_or_create_agent()
-                previous_session_id = st.session_state.session_id
-
-                # Start background processing (non-blocking)
-                async_gen = process_message_streaming(prompt, agent, previous_session_id)
-                start_background_processing(async_gen)
-
-                # Trigger rerun to start rendering the fragment
-                st.rerun()
-        else:
-            # Show disabled input while processing
-            st.chat_input("Agent is processing...", disabled=True)
 
     with tab2:
         render_logs_tab()
