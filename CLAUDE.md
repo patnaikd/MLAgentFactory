@@ -18,6 +18,9 @@ uv run file_creation_agent.py
 
 # Run the Kaggle agent example
 uv run kaggle_agent_example.py
+
+# Run the UCI ML Repository example
+uv run uci_example.py
 ```
 
 ### Python Environment
@@ -35,19 +38,22 @@ uv sync
 - `main.py` - Entry point with basic Hello World implementation
 - `file_creation_agent.py` - Example agent using claude-agent-sdk that demonstrates file creation
 - `kaggle_agent_example.py` - Example agent demonstrating Kaggle CLI integration
+- `uci_example.py` - Example agent demonstrating UCI ML Repository integration
 - `pyproject.toml` - Project metadata and dependency configuration
 - `.python-version` - Python version specification for tooling
 - `src/mlagentfactory/agents/` - Agent implementations
-  - `chat_agent.py` - Conversational agent with file I/O, web, and Kaggle tools
+  - `chat_agent.py` - Conversational agent with file I/O, web, Kaggle, and UCI ML Repository tools
 - `src/mlagentfactory/tools/` - Tool modules for agents
   - `file_io_tools.py` - File and directory operations
   - `web_fetch_tools.py` - Web content fetching with Playwright
   - `kaggle_tools.py` - Kaggle CLI integration for datasets and competitions
+  - `uci_tools.py` - UCI ML Repository integration for datasets
 
 ## Dependencies
 
 - `claude-agent-sdk` - SDK for building Claude-powered agents with autonomous task execution
 - `kaggle` - Official Kaggle API for downloading datasets and competition interaction
+- `ucimlrepo` - Python library for accessing UCI Machine Learning Repository datasets
 - `streamlit` - Web UI framework for interactive agent interfaces
 - `playwright` - Browser automation for JavaScript-heavy web content
 - `jupyter` / `ipykernel` - Jupyter notebook support
@@ -86,6 +92,11 @@ The ChatAgent includes the following tools:
 - `kaggle_list_submissions` - List your competition submissions
 - `kaggle_competition_leaderboard` - View competition leaderboards
 
+**UCI ML Repository Tools:**
+- `uci_list_datasets` - List available datasets from UCI ML Repository (with optional search/filter)
+- `uci_fetch_dataset` - Fetch dataset by ID or name, optionally save to CSV files
+- `uci_get_dataset_info` - Get detailed metadata about a dataset without downloading data
+
 ### Kaggle Setup
 
 To use Kaggle tools, you need to:
@@ -95,3 +106,28 @@ To use Kaggle tools, you need to:
    - Click "Create New API Token"
    - Save the `kaggle.json` file to `~/.kaggle/kaggle.json`
    - Set permissions: `chmod 600 ~/.kaggle/kaggle.json`
+
+### UCI ML Repository Setup
+
+The UCI ML Repository tools are ready to use out of the box:
+1. Install ucimlrepo: `uv add ucimlrepo` (already done)
+2. No API credentials required - datasets are publicly accessible
+3. Popular dataset IDs:
+   - Iris: 53
+   - Wine: 109
+   - Breast Cancer Wisconsin: 17
+   - Adult (Census Income): 2
+4. Full dataset list available at: https://archive.ics.uci.edu/
+
+**Example Usage:**
+```python
+from ucimlrepo import fetch_ucirepo
+
+# Fetch Iris dataset by ID
+iris = fetch_ucirepo(id=53)
+X = iris.data.features
+y = iris.data.targets
+
+# Or by name
+iris = fetch_ucirepo(name='Iris')
+```

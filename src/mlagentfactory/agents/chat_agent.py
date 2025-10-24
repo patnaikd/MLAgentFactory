@@ -18,7 +18,7 @@ from claude_agent_sdk import (
 )
 
 from ..utils.logging_config import initialize_observability
-from ..tools import file_io_tools, web_fetch_tools, kaggle_tools
+from ..tools import file_io_tools, web_fetch_tools, kaggle_tools, uci_tools
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ Always think step-by-step and explain your reasoning.
 If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
-- Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>yyyy-mm-dd_HH-MM-SS. and use it consistently.
+- Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>_yyyy-mm-dd_HH-MM-SS. and use it consistently.
 - Ensure all project files are saved in the project directory and subdirectories under "{current directory}/workspace/{project_name}/" consistently. Always use absolute path when referring to files.
 - If project directory exists, create a new folder with a unique name by adding a date-time suffix.
 - First create a plan before executing any code.
@@ -81,13 +81,24 @@ class ChatAgent:
             ]
         )
 
+        self.uci_server = create_sdk_mcp_server(
+            name="uci_tools",
+            version="1.0.0",
+            tools=[
+                uci_tools.uci_list_datasets,
+                uci_tools.uci_fetch_dataset,
+                uci_tools.uci_get_dataset_info
+            ]
+        )
+
         # Configure agent options
     
         self.options = ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT,
             mcp_servers={
                 "web": self.web_server,
-                "kaggle": self.kaggle_server
+                "kaggle": self.kaggle_server,
+                "uci": self.uci_server
             },
             allowed_tools=[
                 "fetch_webpage",
@@ -96,7 +107,10 @@ class ChatAgent:
                 "kaggle_download_competition_data",
                 "kaggle_submit_competition",
                 "kaggle_list_submissions",
-                "kaggle_competition_leaderboard"
+                "kaggle_competition_leaderboard",
+                "uci_list_datasets",
+                "uci_fetch_dataset",
+                "uci_get_dataset_info"
             ],
             permission_mode="bypassPermissions"
         )
@@ -105,7 +119,7 @@ class ChatAgent:
         self._initialized = False
         self.session_id: Optional[str] = None
         self.total_cost: float = 0.0
-        logger.info("ChatAgent initialized with file I/O, web, and Kaggle tools")
+        logger.info("ChatAgent initialized with file I/O, web, Kaggle, and UCI ML Repository tools")
 
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""
