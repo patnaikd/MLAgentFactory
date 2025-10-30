@@ -11,15 +11,38 @@ import logging
 from typing import Optional, Dict, Any, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import time
 
 from .session_manager import SessionManager
 from ..utils.logging_config import initialize_observability
 
 
 logger = logging.getLogger(__name__)
+
+# Filter uvicorn access logs for GET requests
+class EndpointFilter(logging.Filter):
+    """Filter to suppress GET request logs from uvicorn."""
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Suppress GET /sessions/*/messages (polling endpoint)
+        # Suppress GET /health (health checks)
+        if hasattr(record, 'args') and len(record.args) >= 3:
+            method = str(record.args[2]) if len(record.args) > 2 else ""
+            path = str(record.args[1]) if len(record.args) > 1 else ""
+
+            # Suppress GET requests to messages endpoint (frequent polling)
+            if method == "GET" and "/messages" in path:
+                return False
+            # Suppress health check endpoint
+            if method == "GET" and "/health" in path:
+                return False
+
+        return True
+
+# Add filter to uvicorn access logger
+logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # Global session manager instance
 session_manager: Optional[SessionManager] = None
@@ -329,7 +352,7 @@ async def get_messages(
         )
         message_count = result['count']
         if message_count > 0:
-            logger.info(f"[API] GET /sessions/{session_id[:8]}.../messages - Returning {message_count} new messages")
+            logger.debug(f"[API] GET /sessions/{session_id[:8]}.../messages - Returning {message_count} new messages")
         else:
             logger.debug(f"[API] GET /sessions/{session_id[:8]}.../messages - No new messages")
         return result

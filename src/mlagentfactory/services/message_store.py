@@ -365,7 +365,7 @@ class MessageStore:
                 first_id = messages[0]["message_id"]
                 last_id = messages[-1]["message_id"]
                 message_types = [m["message_type"] for m in messages]
-                logger.info(f"Retrieved {len(messages)} messages for session {session_id}: IDs {first_id}-{last_id}, types: {set(message_types)}")
+                logger.debug(f"Retrieved {len(messages)} messages for session {session_id}: IDs {first_id}-{last_id}, types: {set(message_types)}")
             else:
                 logger.debug(f"No new messages for session {session_id} since message_id {since_message_id}")
 
