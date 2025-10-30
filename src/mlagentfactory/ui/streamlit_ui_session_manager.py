@@ -13,7 +13,11 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from ..utils.logging_config import initialize_observability
+# Handle both relative and absolute imports for flexibility
+try:
+    from ..utils.logging_config import initialize_observability
+except ImportError:
+    from mlagentfactory.utils.logging_config import initialize_observability
 
 
 # Configuration
@@ -313,10 +317,10 @@ def render_chat_message(role: str, content: str):
 
 
 @st.fragment(run_every=f"{POLL_INTERVAL}s")
-def poll_for_messages():
-    """Poll for new messages from the API.
+def poll_and_display_messages():
+    """Poll for new messages from the API and display them.
 
-    This fragment runs every POLL_INTERVAL seconds to fetch new messages.
+    This fragment runs every POLL_INTERVAL seconds to fetch and display new messages.
     """
     if not st.session_state.session_id:
         return
@@ -332,28 +336,51 @@ def poll_for_messages():
     )
 
     if not result:
+        # Still show current response even if no new messages
+        if st.session_state.current_response:
+            with st.chat_message("assistant"):
+                st.markdown(st.session_state.current_response)
         return
 
     messages = result.get("messages", [])
-    if not messages:
-        return
 
-    # Process new messages
-    for msg in messages:
-        message_id = msg["message_id"]
-        chunk = msg["content"]
+    # Process new messages if any
+    if messages:
+        for msg in messages:
+            message_id = msg["message_id"]
+            chunk = msg["content"]
 
-        # Process the chunk and add to current response
-        display_text = process_message_chunk(chunk)
-        if display_text:
-            st.session_state.current_response += display_text
+            # Process the chunk and add to current response
+            display_text = process_message_chunk(chunk)
+            if display_text:
+                st.session_state.current_response += display_text
 
-        # Update last_message_id
-        st.session_state.last_message_id = message_id
+            # Update last_message_id
+            st.session_state.last_message_id = message_id
 
-    # Check if we should stop processing (no more messages expected)
-    # For now, we'll let the user manually stop or continue polling
-    # You could add logic here to detect when the agent is done responding
+    # Display the current response (updated or not)
+    if st.session_state.current_response:
+        with st.chat_message("assistant"):
+            st.markdown(st.session_state.current_response)
+
+    # Show status with stop button
+    with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
+        st.caption(f"Polling for responses... (last message ID: {st.session_state.last_message_id})")
+        st.caption(f"Messages in response: {len(st.session_state.current_response)} characters")
+
+        # Stop processing button
+        if st.button("⏹️ Stop Processing", key=f"stop_{st.session_state.last_message_id}"):
+            # Finalize current response
+            if st.session_state.current_response:
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": st.session_state.current_response,
+                    "timestamp": datetime.now()
+                })
+
+            st.session_state.is_processing = False
+            st.session_state.current_response = ""
+            st.rerun()
 
 
 @st.fragment(run_every="1s")
@@ -609,32 +636,9 @@ def main():
             else:
                 st.chat_input("Agent is processing...", disabled=True)
 
-            # Poll for messages if processing
+            # Poll for messages and display if processing
             if st.session_state.is_processing:
-                poll_for_messages()
-
-                # Show current response
-                if st.session_state.current_response:
-                    with st.chat_message("assistant"):
-                        st.markdown(st.session_state.current_response)
-
-                # Show status
-                with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
-                    st.caption("Polling for responses...")
-
-                    # Stop processing button
-                    if st.button("⏹️ Stop Processing"):
-                        # Finalize current response
-                        if st.session_state.current_response:
-                            st.session_state.messages.append({
-                                "role": "assistant",
-                                "content": st.session_state.current_response,
-                                "timestamp": datetime.now()
-                            })
-
-                        st.session_state.is_processing = False
-                        st.session_state.current_response = ""
-                        st.rerun()
+                poll_and_display_messages()
 
     with tab2:
         render_logs_tab()

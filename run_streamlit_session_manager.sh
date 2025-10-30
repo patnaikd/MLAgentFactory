@@ -13,6 +13,12 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Set PYTHONPATH to include src directory
+export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH}"
+
 # Check if Session Manager API is running
 if ! curl -s http://localhost:8000/health > /dev/null 2>&1; then
     echo "⚠️  Warning: Session Manager API is not running!"
@@ -25,5 +31,6 @@ if ! curl -s http://localhost:8000/health > /dev/null 2>&1; then
     fi
 fi
 
-# Start Streamlit
-uv run streamlit run src/mlagentfactory/ui/streamlit_ui_session_manager.py
+# Start Streamlit using module syntax
+cd "${SCRIPT_DIR}"
+uv run python -m streamlit run src/mlagentfactory/ui/streamlit_ui_session_manager.py

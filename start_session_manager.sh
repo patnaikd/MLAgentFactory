@@ -10,5 +10,11 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Set PYTHONPATH to include src directory
+export PYTHONPATH="${SCRIPT_DIR}/src:${PYTHONPATH}"
+
 # Start the service
 uv run python -m mlagentfactory.cli.session_manager_cli start "$@"
