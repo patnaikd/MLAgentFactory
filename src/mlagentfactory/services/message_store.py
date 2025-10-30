@@ -63,8 +63,18 @@ class MessageStore:
         Yields:
             sqlite3.Connection: Database connection
         """
-        conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        conn = sqlite3.connect(
+            str(self.db_path),
+            check_same_thread=False,
+            isolation_level=None  # Autocommit mode for immediate writes
+        )
         conn.row_factory = sqlite3.Row  # Enable column access by name
+
+        # Enable WAL mode for better concurrent access
+        conn.execute("PRAGMA journal_mode=WAL")
+        # Set synchronous to NORMAL for balance between safety and performance
+        conn.execute("PRAGMA synchronous=NORMAL")
+
         try:
             yield conn
         finally:
@@ -106,8 +116,8 @@ class MessageStore:
                 ON messages(session_id, message_id)
             """)
 
-            conn.commit()
-            logger.debug("Database schema initialized successfully")
+            # Autocommit mode - immediate write
+            logger.debug("Database schema initialized successfully (WAL mode enabled, autocommit mode)")
 
     # ===========================
     # Session Management Methods
@@ -134,9 +144,9 @@ class MessageStore:
                 VALUES (?, ?, ?, ?, ?)
             """, (session_id, SessionStatus.CREATED, now, now, metadata_json))
 
-            conn.commit()
+            # Autocommit mode - writes are immediate
 
-            logger.info(f"Created session: {session_id}")
+            logger.info(f"Created session: {session_id} (immediate write)")
             return self.get_session(session_id)
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
@@ -187,8 +197,8 @@ class MessageStore:
                 WHERE session_id = ?
             """, (status, now, session_id))
 
-            conn.commit()
-            logger.info(f"Updated session {session_id} status to {status}")
+            # Autocommit mode - immediate write
+            logger.info(f"Updated session {session_id} status to {status} (immediate write)")
 
     def update_session_agent_id(self, session_id: str, agent_session_id: str) -> None:
         """Update the agent's internal session ID.
@@ -207,8 +217,8 @@ class MessageStore:
                 WHERE session_id = ?
             """, (agent_session_id, now, session_id))
 
-            conn.commit()
-            logger.debug(f"Updated session {session_id} agent_session_id to {agent_session_id}")
+            # Autocommit mode - immediate write
+            logger.debug(f"Updated session {session_id} agent_session_id to {agent_session_id} (immediate write)")
 
     def update_session_cost(self, session_id: str, total_cost: float) -> None:
         """Update session total cost.
@@ -227,8 +237,8 @@ class MessageStore:
                 WHERE session_id = ?
             """, (total_cost, now, session_id))
 
-            conn.commit()
-            logger.debug(f"Updated session {session_id} total_cost to ${total_cost:.4f}")
+            # Autocommit mode - immediate write
+            logger.debug(f"Updated session {session_id} total_cost to ${total_cost:.4f} (immediate write)")
 
     def list_sessions(self, limit: int = 100) -> List[Dict[str, Any]]:
         """List all sessions.
@@ -270,8 +280,8 @@ class MessageStore:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            conn.commit()
-            logger.info(f"Deleted session: {session_id}")
+            # Autocommit mode - immediate write
+            logger.info(f"Deleted session: {session_id} (immediate write)")
 
     # ===========================
     # Message Management Methods
@@ -305,10 +315,11 @@ class MessageStore:
                 VALUES (?, ?, ?, ?)
             """, (session_id, message_type, content_json, now))
 
-            conn.commit()
+            # No explicit commit needed - we're in autocommit mode (isolation_level=None)
+            # This ensures immediate write to disk for real-time polling
             message_id = cursor.lastrowid
 
-            logger.debug(f"Added message {message_id} to session {session_id}: type={message_type}")
+            logger.debug(f"Added message {message_id} to session {session_id}: type={message_type} (immediate write)")
             return message_id
 
     def get_messages(
@@ -387,5 +398,5 @@ class MessageStore:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-            conn.commit()
-            logger.info(f"Cleared all messages for session: {session_id}")
+            # Autocommit mode - immediate write
+            logger.info(f"Cleared all messages for session: {session_id} (immediate write)")
