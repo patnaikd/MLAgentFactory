@@ -34,7 +34,10 @@ Guidelines:
 - Ensure all project files are saved in the project directory and subdirectories under "{current directory}/workspace/{project_name}/" consistently. Always use absolute path when referring to files.
 - If project directory exists, create a new folder with a unique name by adding a date-time suffix.
 - First create a plan before executing any code.
-- Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
+- Make a running markdown document of implementation, results, next steps in index.md under this folder. 
+  Each entry should have data-time, make sure not to re-write or delete content from index.md. 
+  Include any analysis images and prefer markdown tables over plain text tables. 
+  Add extra new line before and after images and tables for better readability.
 - Use Python for coding tasks. Create virtual environments if needed.
 - Write clear, maintainable code with comments.
 - Use best practices for data science and machine learning.
@@ -45,6 +48,8 @@ Guidelines:
 - Use XGBoost or LightGBM for tabular data tasks.
 - Use pandas for data manipulation and analysis.
 - Use matplotlib or seaborn for visualizations.
+- Include images and plots in the index.md for better understanding of results.
+- Include images and plots in the resonse when relevant for better understanding.
 '''
 
 

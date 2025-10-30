@@ -221,3 +221,170 @@ uv run python src/mlagentfactory/ui/gradio_ui.py
 | REST API | ✅ Auto-generated | ❌ Not available |
 | Concurrent Users | ✅ Better handling | ⚠️ Limited |
 | Code Complexity | ✅ Simpler async | ⚠️ Manual threading |
+
+## Session Manager Architecture (NEW)
+
+The Session Manager provides a standalone service for hosting long-running ChatAgent instances with pull-based message streaming.
+
+### Architecture Overview
+
+The Session Manager consists of:
+
+1. **Message Store** (`src/mlagentfactory/services/message_store.py`)
+   - SQLite-based persistent storage for sessions and messages
+   - Cursor-based pagination for efficient message retrieval
+   - Session lifecycle management (created, running, completed, failed, stopped)
+   - Message types: text, tool_use, tool_result, todo_update, session_id, total_cost
+
+2. **Process Manager** (`src/mlagentfactory/services/process_manager.py`)
+   - Spawns isolated processes for each ChatAgent session
+   - Handles process lifecycle (start, monitor, stop)
+   - Captures agent output and stores in MessageStore
+   - Handles crashes and restarts
+
+3. **Session Manager** (`src/mlagentfactory/services/session_manager.py`)
+   - High-level orchestration layer
+   - Coordinates message store and process manager
+   - Provides API for session creation, querying, and message retrieval
+
+4. **FastAPI REST API** (`src/mlagentfactory/services/api.py`)
+   - RESTful endpoints for session management
+   - Auto-generated OpenAPI documentation
+   - CORS-enabled for web clients
+
+5. **Streamlit UI with Session Manager** (`src/mlagentfactory/ui/streamlit_ui_session_manager.py`)
+   - Pull-based message polling via REST API
+   - No direct agent instantiation
+   - Stateless UI that polls for updates
+
+### Key Features
+
+- **Process Isolation**: Each agent runs in its own process for stability
+- **Pull-based Messaging**: UI polls for messages instead of maintaining open connections
+- **Persistent Storage**: All messages stored in SQLite for reliability
+- **Cursor-based Pagination**: Efficient message retrieval using message IDs
+- **Session Management**: Create, query, stop, and delete sessions via API
+
+### Running the Session Manager
+
+**Step 1: Start the Session Manager API**
+```bash
+# Using the startup script (recommended)
+./start_session_manager.sh
+
+# Or manually
+uv run python -m mlagentfactory.cli.session_manager_cli start
+
+# With auto-reload for development
+./start_session_manager.sh --reload
+
+# Custom host/port
+uv run python -m mlagentfactory.cli.session_manager_cli start --host 0.0.0.0 --port 8000
+```
+
+The API will be available at:
+- Base URL: `http://localhost:8000`
+- API Docs: `http://localhost:8000/docs`
+- Health Check: `http://localhost:8000/health`
+
+**Step 2: Start the Streamlit UI**
+```bash
+# Using the startup script (recommended)
+./run_streamlit_session_manager.sh
+
+# Or manually
+uv run streamlit run src/mlagentfactory/ui/streamlit_ui_session_manager.py
+```
+
+Access the UI at: `http://localhost:8501`
+
+### Session Manager CLI
+
+The CLI provides commands for managing sessions:
+
+```bash
+# Check service status
+uv run python -m mlagentfactory.cli.session_manager_cli status
+
+# List all sessions
+uv run python -m mlagentfactory.cli.session_manager_cli sessions
+
+# Get session info
+uv run python -m mlagentfactory.cli.session_manager_cli info <session-id>
+
+# Stop a session
+uv run python -m mlagentfactory.cli.session_manager_cli stop-session <session-id>
+
+# Stop the service
+uv run python -m mlagentfactory.cli.session_manager_cli stop
+```
+
+### REST API Endpoints
+
+**Session Management:**
+- `POST /sessions` - Create new session
+- `GET /sessions` - List all sessions
+- `GET /sessions/{session_id}` - Get session info
+- `GET /sessions/{session_id}/stats` - Get session statistics
+- `DELETE /sessions/{session_id}` - Stop session
+- `DELETE /sessions/{session_id}/data` - Delete session permanently
+
+**Message Operations:**
+- `POST /sessions/{session_id}/query` - Send query to agent
+- `GET /sessions/{session_id}/messages` - Poll for new messages
+  - Query params: `since_message_id` (cursor), `limit` (max messages)
+
+**Health Check:**
+- `GET /health` - Service health and statistics
+
+### Message Polling Pattern
+
+The UI implements cursor-based polling:
+
+1. Initial request: `GET /sessions/{session_id}/messages?since_message_id=0`
+2. Store `next_cursor` from response
+3. Poll again: `GET /sessions/{session_id}/messages?since_message_id={next_cursor}`
+4. Continue polling every 0.5-1 seconds while `is_processing`
+
+### Database Schema
+
+**Sessions Table:**
+```sql
+CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    agent_session_id TEXT,
+    total_cost REAL DEFAULT 0.0,
+    metadata TEXT
+);
+```
+
+**Messages Table:**
+```sql
+CREATE TABLE messages (
+    message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    message_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
+);
+```
+
+### Development Notes
+
+- SQLite database stored in: `data/sessions.db`
+- Process-safe: Uses multiprocessing with queues for IPC
+- Thread-safe: SQLite with `check_same_thread=False` and context managers
+- Graceful shutdown: Proper cleanup of processes and resources
+- Error handling: Process failures don't crash the service
+
+### Architecture Benefits
+
+1. **Scalability**: Each agent runs in isolation
+2. **Reliability**: Process crashes don't affect other sessions
+3. **Persistence**: Messages survive service restarts
+4. **Simplicity**: Pull-based polling is easier to debug than push/streaming
+5. **Flexibility**: REST API allows any client (web, CLI, etc.)

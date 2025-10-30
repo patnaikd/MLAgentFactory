@@ -1732,6 +1732,7 @@ dependencies = [
     { name = "anthropic" },
     { name = "beautifulsoup4" },
     { name = "claude-agent-sdk" },
+    { name = "fastapi" },
     { name = "gradio" },
     { name = "ipykernel" },
     { name = "jupyter" },
@@ -1748,6 +1749,7 @@ dependencies = [
     { name = "seaborn" },
     { name = "streamlit" },
     { name = "ucimlrepo" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -1755,6 +1757,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.69.0" },
     { name = "beautifulsoup4", specifier = ">=4.14.2" },
     { name = "claude-agent-sdk", specifier = ">=0.1.0" },
+    { name = "fastapi", specifier = ">=0.120.0" },
     { name = "gradio", specifier = ">=5.0.0" },
     { name = "ipykernel", specifier = ">=6.30.1" },
     { name = "jupyter", specifier = ">=1.1.1" },
@@ -1771,6 +1774,7 @@ requires-dist = [
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "streamlit", specifier = ">=1.50.0" },
     { name = "ucimlrepo", specifier = ">=0.0.7" },
+    { name = "uvicorn", specifier = ">=0.37.0" },
 ]
 
 [[package]]
