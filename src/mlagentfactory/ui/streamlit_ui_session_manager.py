@@ -221,20 +221,24 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
     """Process a message chunk and return display text.
 
     Args:
-        chunk: Message chunk from API
+        chunk: Message chunk from API (the 'content' field from the message)
 
     Returns:
         Display text or None
     """
+    # chunk is already the 'content' object from the API message
+    # It has structure: {"type": "text", "content": "...", ...}
     content = chunk.get("content")
-    message_type = chunk.get("message_type")
+    message_type = chunk.get("type")  # Fixed: was "message_type", should be "type"
+
+    logging.debug(f"Processing chunk: type={message_type}, has_content={content is not None}")
 
     if message_type == "text":
         return content
 
     elif message_type == "tool_use":
-        tool_name = content.get("tool_name", "")
-        tool_input = content.get("tool_input", {})
+        tool_name = chunk.get("tool_name", "")  # Fixed: get from chunk, not content
+        tool_input = chunk.get("tool_input", {})  # Fixed: get from chunk, not content
 
         # Special display for Bash commands
         if tool_name == "Bash" and tool_input:
@@ -263,13 +267,13 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
             else:
                 return f"\n\n**{emoji} {tool_name}**\n\n"
         else:
-            # Default tool display
-            tool_display = content.get("content", f"Using tool: {tool_name}")
+            # Default tool display - use content variable which is chunk.get("content")
+            tool_display = content if content else f"Using tool: {tool_name}"
             return f"\n\n*{tool_display}*\n\n"
 
     elif message_type == "tool_result":
-        result_content = content.get("content", "")
-        is_error = content.get("is_error", False)
+        result_content = content  # content is already chunk.get("content")
+        is_error = chunk.get("is_error", False)  # Fixed: get is_error from chunk
 
         if is_error:
             return f"\n\n**⚠️ Tool Execution Error:**\n```\n{result_content}\n```\n\n"
