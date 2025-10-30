@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import multiprocessing
+import os
 from multiprocessing import Process, Queue
 from typing import Optional, Dict, Any
 from queue import Empty
@@ -43,32 +44,43 @@ def _agent_process_worker(
         format='%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
     )
     logger = logging.getLogger(__name__)
-    logger.info(f"Agent process started for session: {session_id}")
+    process_id = os.getpid()
+    logger.info(f"[PROCESS-{session_id[:8]}] Agent process started (PID: {process_id})")
 
     # Create message store instance for this process
     message_store = MessageStore(db_path=db_path)
+    logger.debug(f"[PROCESS-{session_id[:8]}] Message store initialized with db_path: {db_path}")
 
     # Update session status to running
     message_store.update_session_status(session_id, SessionStatus.RUNNING)
+    logger.info(f"[PROCESS-{session_id[:8]}] Session status updated to RUNNING")
 
     async def run_agent():
         """Async function to run the agent."""
+        logger.info(f"[PROCESS-{session_id[:8]}] Initializing ChatAgent...")
         agent = ChatAgent()
         await agent.initialize()
+        logger.info(f"[PROCESS-{session_id[:8]}] ChatAgent initialized successfully")
 
+        message_count = 0
         try:
+            logger.info(f"[PROCESS-{session_id[:8]}] Entering command loop, waiting for queries...")
             while True:
                 # Check for commands (non-blocking)
                 try:
                     command = command_queue.get(timeout=0.1)
+                    command_type = command["type"]
+                    logger.debug(f"[PROCESS-{session_id[:8]}] Received command: {command_type}")
 
-                    if command["type"] == "query":
+                    if command_type == "query":
                         user_message = command["message"]
-                        logger.info(f"Processing query for session {session_id}: {user_message[:100]}")
+                        logger.info(f"[PROCESS-{session_id[:8]}] Processing query: {user_message[:100]}{'...' if len(user_message) > 100 else ''}")
 
                         # Stream agent response
                         try:
+                            chunk_count = 0
                             async for chunk in agent.send_message(user_message):
+                                chunk_count += 1
                                 # Store message in database
                                 message_type = MessageType(chunk["type"])
                                 content = chunk.get("content")
@@ -79,6 +91,11 @@ def _agent_process_worker(
                                     message_type=message_type,
                                     content=chunk  # Store the entire chunk with all fields
                                 )
+                                message_count += 1
+
+                                # Log every 10th message to avoid log spam
+                                if chunk_count % 10 == 0:
+                                    logger.debug(f"[PROCESS-{session_id[:8]}] Stored {chunk_count} messages so far...")
 
                                 # Also send to queue for immediate processing if needed
                                 message_queue.put({
@@ -89,14 +106,16 @@ def _agent_process_worker(
 
                                 # Handle special message types
                                 if message_type == MessageType.SESSION_ID:
+                                    logger.info(f"[PROCESS-{session_id[:8]}] Captured agent session ID: {content}")
                                     message_store.update_session_agent_id(session_id, content)
                                 elif message_type == MessageType.TOTAL_COST:
+                                    logger.info(f"[PROCESS-{session_id[:8]}] Updated total cost: ${content:.4f}")
                                     message_store.update_session_cost(session_id, content)
 
-                            logger.info(f"Completed query processing for session {session_id}")
+                            logger.info(f"[PROCESS-{session_id[:8]}] Completed query processing: stored {chunk_count} messages, total session messages: {message_count}")
 
                         except Exception as e:
-                            logger.error(f"Error processing query: {e}", exc_info=True)
+                            logger.error(f"[PROCESS-{session_id[:8]}] Error processing query: {e}", exc_info=True)
                             message_queue.put({
                                 "type": "error",
                                 "session_id": session_id,

@@ -191,8 +191,10 @@ async def create_session(request: CreateSessionRequest):
     Returns:
         Session information including session_id
     """
+    logger.info(f"[API] POST /sessions - Creating new session with metadata: {request.metadata}")
     try:
         session = session_manager.create_session(metadata=request.metadata)
+        logger.info(f"[API] POST /sessions - Session created successfully: {session['session_id']}")
         return {
             "session_id": session["session_id"],
             "status": session["status"],
@@ -200,7 +202,7 @@ async def create_session(request: CreateSessionRequest):
             "message": "Session created successfully"
         }
     except Exception as e:
-        logger.error(f"Failed to create session: {e}", exc_info=True)
+        logger.error(f"[API] POST /sessions - Failed to create session: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -280,15 +282,19 @@ async def send_query(session_id: str, request: SendQueryRequest):
     Returns:
         Status response
     """
+    logger.info(f"[API] POST /sessions/{session_id[:8]}.../query - Received query: {request.message[:100]}{'...' if len(request.message) > 100 else ''}")
     try:
         result = session_manager.send_query(session_id, request.message)
+        logger.info(f"[API] POST /sessions/{session_id[:8]}.../query - Query sent successfully")
         return result
     except ValueError as e:
+        logger.warning(f"[API] POST /sessions/{session_id[:8]}.../query - Session not found")
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:
+        logger.error(f"[API] POST /sessions/{session_id[:8]}.../query - Runtime error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to send query to session {session_id}: {e}", exc_info=True)
+        logger.error(f"[API] POST /sessions/{session_id[:8]}.../query - Failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -314,17 +320,24 @@ async def get_messages(
     Returns:
         Messages with pagination cursor
     """
+    logger.debug(f"[API] GET /sessions/{session_id[:8]}.../messages - Polling: since_message_id={since_message_id}, limit={limit}")
     try:
         result = session_manager.get_messages(
             session_id=session_id,
             since_message_id=since_message_id,
             limit=limit
         )
+        message_count = result['count']
+        if message_count > 0:
+            logger.info(f"[API] GET /sessions/{session_id[:8]}.../messages - Returning {message_count} new messages")
+        else:
+            logger.debug(f"[API] GET /sessions/{session_id[:8]}.../messages - No new messages")
         return result
     except ValueError as e:
+        logger.warning(f"[API] GET /sessions/{session_id[:8]}.../messages - Session not found")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        logger.error(f"Failed to get messages for session {session_id}: {e}", exc_info=True)
+        logger.error(f"[API] GET /sessions/{session_id[:8]}.../messages - Failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

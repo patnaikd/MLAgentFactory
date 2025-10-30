@@ -111,28 +111,35 @@ class SessionManager:
             ValueError: If session doesn't exist
             RuntimeError: If agent process is not running
         """
+        logger.info(f"[SESSION-{session_id[:8]}] Received query request: {message[:100]}{'...' if len(message) > 100 else ''}")
+
         # Verify session exists
         session = self.message_store.get_session(session_id)
         if not session:
+            logger.error(f"[SESSION-{session_id[:8]}] Session not found")
             raise ValueError(f"Session not found: {session_id}")
+
+        logger.debug(f"[SESSION-{session_id[:8]}] Session exists: status={session['status']}")
 
         # Get or create process
         process = self.process_manager.get_process(session_id)
         if not process or not process.is_alive():
-            logger.info(f"Process not running for session {session_id}, creating new process")
+            logger.warning(f"[SESSION-{session_id[:8]}] Process not running, creating new process")
             process = self.process_manager.create_process(session_id)
+        else:
+            logger.debug(f"[SESSION-{session_id[:8]}] Using existing process")
 
         # Send query to process
         try:
             process.send_query(message)
-            logger.info(f"Query sent to session {session_id}")
+            logger.info(f"[SESSION-{session_id[:8]}] Query sent successfully to agent process")
             return {
                 "status": "success",
                 "session_id": session_id,
                 "message": "Query sent successfully"
             }
         except Exception as e:
-            logger.error(f"Failed to send query to session {session_id}: {e}", exc_info=True)
+            logger.error(f"[SESSION-{session_id[:8]}] Failed to send query: {e}", exc_info=True)
             raise RuntimeError(f"Failed to send query: {str(e)}")
 
     def get_messages(
@@ -157,12 +164,15 @@ class SessionManager:
         Raises:
             ValueError: If session doesn't exist
         """
+        logger.debug(f"[SESSION-{session_id[:8]}] Getting messages: since_message_id={since_message_id}, limit={limit}")
+
         # Verify session exists
         session = self.message_store.get_session(session_id)
         if not session:
+            logger.error(f"[SESSION-{session_id[:8]}] Session not found when getting messages")
             raise ValueError(f"Session not found: {session_id}")
 
-        # Get messages from store
+        # Get messages from store (message_store.get_messages already logs)
         messages = self.message_store.get_messages(
             session_id=session_id,
             since_message_id=since_message_id,
@@ -181,6 +191,10 @@ class SessionManager:
             if len(messages) == limit:
                 # There might be more messages
                 has_more = True
+
+            logger.debug(f"[SESSION-{session_id[:8]}] Returning {len(messages)} messages, next_cursor={next_cursor}, has_more={has_more}")
+        else:
+            logger.debug(f"[SESSION-{session_id[:8]}] No new messages available")
 
         return {
             "messages": messages,

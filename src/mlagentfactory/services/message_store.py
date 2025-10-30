@@ -148,13 +148,14 @@ class MessageStore:
         Returns:
             Dict containing session information, or None if not found
         """
+        logger.debug(f"Getting session: {session_id}")
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
 
             if row:
-                return {
+                session_data = {
                     "session_id": row["session_id"],
                     "status": row["status"],
                     "created_at": row["created_at"],
@@ -163,6 +164,10 @@ class MessageStore:
                     "total_cost": row["total_cost"],
                     "metadata": json.loads(row["metadata"]) if row["metadata"] else None
                 }
+                logger.debug(f"Found session {session_id}: status={session_data['status']}, cost=${session_data['total_cost']:.4f}")
+                return session_data
+
+            logger.warning(f"Session not found: {session_id}")
             return None
 
     def update_session_status(self, session_id: str, status: SessionStatus) -> None:
@@ -322,6 +327,8 @@ class MessageStore:
         Returns:
             List of message dictionaries
         """
+        logger.debug(f"Fetching messages for session {session_id}: since_message_id={since_message_id}, limit={limit}")
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -343,7 +350,14 @@ class MessageStore:
                 for row in rows
             ]
 
-            logger.debug(f"Retrieved {len(messages)} messages for session {session_id} since message_id {since_message_id}")
+            if messages:
+                first_id = messages[0]["message_id"]
+                last_id = messages[-1]["message_id"]
+                message_types = [m["message_type"] for m in messages]
+                logger.info(f"Retrieved {len(messages)} messages for session {session_id}: IDs {first_id}-{last_id}, types: {set(message_types)}")
+            else:
+                logger.debug(f"No new messages for session {session_id} since message_id {since_message_id}")
+
             return messages
 
     def get_message_count(self, session_id: str) -> int:
