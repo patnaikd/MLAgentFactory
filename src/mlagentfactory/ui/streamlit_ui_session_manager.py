@@ -307,8 +307,13 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
         return None
 
     elif message_type == "todo_update":
-        st.session_state.current_todos = content
-        logging.debug(f"Updated todos: {len(content) if content else 0} items")
+        # content should be an array of todo items
+        if content and isinstance(content, list):
+            st.session_state.current_todos = content
+            logging.info(f"Updated todos: {len(content)} items - statuses: {[t.get('status') for t in content]}")
+        else:
+            logging.warning(f"Received invalid todo_update content: {type(content)}")
+            st.session_state.current_todos = []
         return None
 
     return None
