@@ -620,125 +620,45 @@ def main():
         if not st.session_state.session_id:
             st.info("👈 Click 'Start New Session' in the sidebar to begin")
         else:
-            # Create a container for the scrollable chat area
-            chat_container = st.container()
+            # Create a scrollable container with fixed height
+            chat_container = st.container(height=800)
 
             with chat_container:
-                # Build HTML for all messages
-                chat_html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                <style>
-                body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-                .chat-container {
-                    max-height: 500px;
-                    overflow-y: auto;
-                    padding: 15px;
-                    background-color: #f8f9fa;
-                    border-radius: 8px;
-                    border: 1px solid #e0e0e0;
-                    margin-bottom: 10px;
-                }
-                .message {
-                    margin-bottom: 15px;
-                    padding: 12px 16px;
-                    border-radius: 8px;
-                    max-width: 85%;
-                    word-wrap: break-word;
-                    line-height: 1.5;
-                }
-                .user-message {
-                    background-color: #007bff;
-                    color: white;
-                    margin-left: auto;
-                    text-align: left;
-                }
-                .assistant-message {
-                    background-color: #ffffff;
-                    color: #333;
-                    border: 1px solid #e0e0e0;
-                    margin-right: auto;
-                }
-                .timestamp {
-                    font-size: 0.75em;
-                    opacity: 0.7;
-                    margin-top: 5px;
-                }
-                code {
-                    background-color: #f4f4f4;
-                    padding: 2px 6px;
-                    border-radius: 3px;
-                    font-family: 'Courier New', monospace;
-                    font-size: 0.9em;
-                }
-                pre {
-                    background-color: #f4f4f4;
-                    padding: 10px;
-                    border-radius: 5px;
-                    overflow-x: auto;
-                }
-                .user-message code, .user-message pre {
-                    background-color: rgba(255, 255, 255, 0.2);
-                }
-                </style>
-                </head>
-                <body>
-                <div class="chat-container" id="chat-container">
-                """
-
-                # Add all messages to HTML
+                # Display all messages using Streamlit's native chat_message
                 for message in st.session_state.messages:
-                    role = message["role"]
-                    content = message["content"]
-                    timestamp = message.get("timestamp", datetime.now()).strftime("%H:%M:%S")
+                    render_chat_message(message["role"], message["content"])
 
-                    # Escape HTML but preserve markdown formatting
-                    content_html = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    # Simple markdown-like formatting
-                    content_html = content_html.replace('**', '<strong>').replace('**', '</strong>')
-                    content_html = content_html.replace('\n', '<br>')
-
-                    message_class = "user-message" if role == "user" else "assistant-message"
-                    chat_html += f"""
-                    <div class="message {message_class}">
-                        {content_html}
-                        <div class="timestamp">{timestamp}</div>
-                    </div>
-                    """
-
-                # Add current response if processing
+                # Display current response if processing
                 if st.session_state.is_processing and st.session_state.current_response:
-                    content_html = st.session_state.current_response.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                    content_html = content_html.replace('**', '<strong>').replace('**', '</strong>')
-                    content_html = content_html.replace('\n', '<br>')
+                    with st.chat_message("assistant"):
+                        st.markdown(st.session_state.current_response)
+                        st.caption("*typing...*")
 
-                    chat_html += f"""
-                    <div class="message assistant-message">
-                        {content_html}
-                        <div class="timestamp">typing...</div>
-                    </div>
-                    """
+                # Add a marker element at the bottom for auto-scroll
+                st.markdown('<div id="bottom-marker"></div>', unsafe_allow_html=True)
 
-                chat_html += """
-                </div>
+            # Add auto-scroll JavaScript
+            st.markdown("""
                 <script>
-                    function scrollToBottom() {
-                        var chatContainer = document.getElementById('chat-container');
-                        if (chatContainer) {
-                            chatContainer.scrollTop = chatContainer.scrollHeight;
+                    function scrollChatToBottom() {
+                        const marker = document.getElementById('bottom-marker');
+                        if (marker) {
+                            marker.scrollIntoView({ behavior: 'smooth', block: 'end' });
                         }
                     }
-                    scrollToBottom();
-                    window.addEventListener('load', scrollToBottom);
-                    setTimeout(scrollToBottom, 50);
-                    setTimeout(scrollToBottom, 200);
-                </script>
-                </body>
-                </html>
-                """
+                    // Run multiple times to ensure content is loaded
+                    setTimeout(scrollChatToBottom, 100);
+                    setTimeout(scrollChatToBottom, 300);
+                    setTimeout(scrollChatToBottom, 500);
 
-                components.html(chat_html, height=550, scrolling=False)
+                    // Set up observer to auto-scroll when content changes
+                    const observer = new MutationObserver(scrollChatToBottom);
+                    const container = document.querySelector('[data-testid="stVerticalBlock"]');
+                    if (container) {
+                        observer.observe(container, { childList: true, subtree: true });
+                    }
+                </script>
+            """, unsafe_allow_html=True)
 
             # Fixed section at bottom for status and input
             bottom_container = st.container()
