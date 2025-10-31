@@ -316,6 +316,12 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
             st.session_state.current_todos = []
         return None
 
+    elif message_type == "processing_complete":
+        # Signal that agent is done processing
+        logging.info("Received processing_complete signal - agent finished processing query")
+        st.session_state.is_processing = False
+        return None
+
     return None
 
 
@@ -327,9 +333,10 @@ def render_chat_message(role: str, content: str):
 
 @st.fragment(run_every=f"{POLL_INTERVAL}s")
 def poll_and_display_messages():
-    """Poll for new messages from the API and display them.
+    """Poll for new messages from the API and update state.
 
-    This fragment runs every POLL_INTERVAL seconds to fetch and display new messages.
+    This fragment runs every POLL_INTERVAL seconds to fetch messages and update state.
+    The actual display is handled by the HTML component in the main chat container.
     """
     if not st.session_state.session_id:
         return
@@ -345,10 +352,6 @@ def poll_and_display_messages():
     )
 
     if not result:
-        # Still show current response even if no new messages
-        if st.session_state.current_response:
-            with st.chat_message("assistant"):
-                st.markdown(st.session_state.current_response)
         return
 
     messages = result.get("messages", [])
@@ -367,29 +370,23 @@ def poll_and_display_messages():
             # Update last_message_id
             st.session_state.last_message_id = message_id
 
-    # Display the current response (updated or not)
-    if st.session_state.current_response:
-        with st.chat_message("assistant"):
-            st.markdown(st.session_state.current_response)
-
-    # Show status with stop button
-    with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
-        st.caption(f"Polling for responses... (last message ID: {st.session_state.last_message_id})")
-        st.caption(f"Messages in response: {len(st.session_state.current_response)} characters")
-
-        # Stop processing button
-        if st.button("⏹️ Stop Processing", key=f"stop_{st.session_state.last_message_id}"):
-            # Finalize current response
+        # Check if processing was completed in this batch
+        if not st.session_state.is_processing:
+            # Finalize current response and add to message history
             if st.session_state.current_response:
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": st.session_state.current_response,
                     "timestamp": datetime.now()
                 })
+                st.session_state.current_response = ""
 
-            st.session_state.is_processing = False
-            st.session_state.current_response = ""
+            # Trigger rerun to update UI and enable input
             st.rerun()
+            return
+
+        # Trigger rerun to update the HTML display with new content
+        st.rerun()
 
 
 @st.fragment(run_every="1s")
@@ -623,29 +620,169 @@ def main():
         if not st.session_state.session_id:
             st.info("👈 Click 'Start New Session' in the sidebar to begin")
         else:
-            # Display chat history
-            for message in st.session_state.messages:
-                render_chat_message(message["role"], message["content"])
+            # Create a container for the scrollable chat area
+            chat_container = st.container()
 
-            # Chat input
-            if not st.session_state.is_processing:
-                if prompt := st.chat_input("Type your message here..."):
-                    # Add user message
-                    st.session_state.messages.append({
-                        "role": "user",
-                        "content": prompt,
-                        "timestamp": datetime.now()
-                    })
+            with chat_container:
+                # Build HTML for all messages
+                chat_html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                <style>
+                body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+                .chat-container {
+                    max-height: 500px;
+                    overflow-y: auto;
+                    padding: 15px;
+                    background-color: #f8f9fa;
+                    border-radius: 8px;
+                    border: 1px solid #e0e0e0;
+                    margin-bottom: 10px;
+                }
+                .message {
+                    margin-bottom: 15px;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    max-width: 85%;
+                    word-wrap: break-word;
+                    line-height: 1.5;
+                }
+                .user-message {
+                    background-color: #007bff;
+                    color: white;
+                    margin-left: auto;
+                    text-align: left;
+                }
+                .assistant-message {
+                    background-color: #ffffff;
+                    color: #333;
+                    border: 1px solid #e0e0e0;
+                    margin-right: auto;
+                }
+                .timestamp {
+                    font-size: 0.75em;
+                    opacity: 0.7;
+                    margin-top: 5px;
+                }
+                code {
+                    background-color: #f4f4f4;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                    font-family: 'Courier New', monospace;
+                    font-size: 0.9em;
+                }
+                pre {
+                    background-color: #f4f4f4;
+                    padding: 10px;
+                    border-radius: 5px;
+                    overflow-x: auto;
+                }
+                .user-message code, .user-message pre {
+                    background-color: rgba(255, 255, 255, 0.2);
+                }
+                </style>
+                </head>
+                <body>
+                <div class="chat-container" id="chat-container">
+                """
 
-                    # Send query to API
-                    if send_query(st.session_state.session_id, prompt):
-                        st.session_state.is_processing = True
-                        st.session_state.current_response = ""
-                        st.rerun()
-            else:
-                st.chat_input("Agent is processing...", disabled=True)
+                # Add all messages to HTML
+                for message in st.session_state.messages:
+                    role = message["role"]
+                    content = message["content"]
+                    timestamp = message.get("timestamp", datetime.now()).strftime("%H:%M:%S")
 
-            # Poll for messages and display if processing
+                    # Escape HTML but preserve markdown formatting
+                    content_html = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    # Simple markdown-like formatting
+                    content_html = content_html.replace('**', '<strong>').replace('**', '</strong>')
+                    content_html = content_html.replace('\n', '<br>')
+
+                    message_class = "user-message" if role == "user" else "assistant-message"
+                    chat_html += f"""
+                    <div class="message {message_class}">
+                        {content_html}
+                        <div class="timestamp">{timestamp}</div>
+                    </div>
+                    """
+
+                # Add current response if processing
+                if st.session_state.is_processing and st.session_state.current_response:
+                    content_html = st.session_state.current_response.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                    content_html = content_html.replace('**', '<strong>').replace('**', '</strong>')
+                    content_html = content_html.replace('\n', '<br>')
+
+                    chat_html += f"""
+                    <div class="message assistant-message">
+                        {content_html}
+                        <div class="timestamp">typing...</div>
+                    </div>
+                    """
+
+                chat_html += """
+                </div>
+                <script>
+                    function scrollToBottom() {
+                        var chatContainer = document.getElementById('chat-container');
+                        if (chatContainer) {
+                            chatContainer.scrollTop = chatContainer.scrollHeight;
+                        }
+                    }
+                    scrollToBottom();
+                    window.addEventListener('load', scrollToBottom);
+                    setTimeout(scrollToBottom, 50);
+                    setTimeout(scrollToBottom, 200);
+                </script>
+                </body>
+                </html>
+                """
+
+                components.html(chat_html, height=550, scrolling=False)
+
+            # Fixed section at bottom for status and input
+            bottom_container = st.container()
+
+            with bottom_container:
+                # Show thinking indicator if processing
+                if st.session_state.is_processing:
+                    with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
+                        st.caption(f"Polling for responses... (last message ID: {st.session_state.last_message_id})")
+                        st.caption(f"Messages in response: {len(st.session_state.current_response)} characters")
+
+                        # Stop processing button
+                        if st.button("⏹️ Stop Processing", key=f"stop_{st.session_state.last_message_id}"):
+                            # Finalize current response
+                            if st.session_state.current_response:
+                                st.session_state.messages.append({
+                                    "role": "assistant",
+                                    "content": st.session_state.current_response,
+                                    "timestamp": datetime.now()
+                                })
+
+                            st.session_state.is_processing = False
+                            st.session_state.current_response = ""
+                            st.rerun()
+
+                # Chat input (always visible at bottom)
+                if not st.session_state.is_processing:
+                    if prompt := st.chat_input("Type your message here..."):
+                        # Add user message
+                        st.session_state.messages.append({
+                            "role": "user",
+                            "content": prompt,
+                            "timestamp": datetime.now()
+                        })
+
+                        # Send query to API
+                        if send_query(st.session_state.session_id, prompt):
+                            st.session_state.is_processing = True
+                            st.session_state.current_response = ""
+                            st.rerun()
+                else:
+                    st.chat_input("Agent is processing...", disabled=True)
+
+            # Poll for messages if processing (hidden fragment)
             if st.session_state.is_processing:
                 poll_and_display_messages()
 

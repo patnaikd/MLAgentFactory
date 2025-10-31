@@ -56,6 +56,7 @@ def start_service(host: str = "0.0.0.0", port: int = 8000, reload: bool = False)
         "mlagentfactory.services.api:app",
         "--host", host,
         "--port", str(port),
+        "--log-level", "info",
     ]
 
     if reload:

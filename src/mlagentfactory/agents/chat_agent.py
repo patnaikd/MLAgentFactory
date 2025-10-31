@@ -158,6 +158,7 @@ class ChatAgent:
             - "todo_update": TodoWrite tool usage (content: list of todos, tool_use_id: str)
             - "session_id": Session identifier (content: str)
             - "total_cost": Total cost in USD (content: float)
+            - "processing_complete": Signal that agent is done processing (content: str)
         """
         if not self.client:
             raise RuntimeError("ChatAgent must be used as an async context manager")
@@ -328,6 +329,13 @@ class ChatAgent:
                 logger.warning(f"[INCOMING] Unexpected message type: {type(msg).__name__}, content: {msg!r}")
 
         logger.info(f"[INCOMING] Response stream completed. Total messages received: {response_count}")
+
+        # Emit processing_complete signal to indicate agent is done processing
+        logger.info("[INCOMING] Emitting processing_complete signal")
+        yield {
+            "type": "processing_complete",
+            "content": "Agent has finished processing this query"
+        }
 
     async def chat(self, message: str) -> str:
         """Send a message and return the complete response.

@@ -111,6 +111,8 @@ def _agent_process_worker(
                                 elif message_type == MessageType.TOTAL_COST:
                                     logger.info(f"[PROCESS-{session_id[:8]}] Updated total cost: ${content:.4f}")
                                     message_store.update_session_cost(session_id, content)
+                                elif message_type == MessageType.PROCESSING_COMPLETE:
+                                    logger.info(f"[PROCESS-{session_id[:8]}] Processing completed for query")
 
                             logger.info(f"[PROCESS-{session_id[:8]}] Completed query processing: stored {chunk_count} messages, total session messages: {message_count}")
 

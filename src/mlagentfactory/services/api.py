@@ -22,27 +22,33 @@ from ..utils.logging_config import initialize_observability
 
 logger = logging.getLogger(__name__)
 
-# Filter uvicorn access logs for GET requests
-class EndpointFilter(logging.Filter):
-    """Filter to suppress GET request logs from uvicorn."""
-    def filter(self, record: logging.LogRecord) -> bool:
-        # Suppress GET /sessions/*/messages (polling endpoint)
-        # Suppress GET /health (health checks)
-        if hasattr(record, 'args') and len(record.args) >= 3:
-            method = str(record.args[2]) if len(record.args) > 2 else ""
-            path = str(record.args[1]) if len(record.args) > 1 else ""
+# Filter uvicorn access logs for GET requests to polling endpoints
+class PollingEndpointFilter(logging.Filter):
+    """Filter to suppress noisy GET request logs from uvicorn for polling endpoints."""
 
-            # Suppress GET requests to messages endpoint (frequent polling)
-            if method == "GET" and "/messages" in path:
-                return False
-            # Suppress health check endpoint
-            if method == "GET" and "/health" in path:
+    SUPPRESSED_PATHS = [
+        '/messages',  # Message polling
+        '/stats',     # Statistics polling
+        '/health',    # Health checks
+    ]
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Get the formatted log message
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+
+        # Only filter GET requests
+        if '"GET ' not in message:
+            return True
+
+        # Check if any suppressed path is in the message
+        for path in self.SUPPRESSED_PATHS:
+            if path in message:
                 return False
 
         return True
-
-# Add filter to uvicorn access logger
-logging.getLogger("uvicorn.access").addFilter(EndpointFilter())
 
 # Global session manager instance
 session_manager: Optional[SessionManager] = None
@@ -59,6 +65,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize logging
     initialize_observability(log_level="INFO", enable_tracing=False)
+
+    # Apply filter to suppress noisy polling logs
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.addFilter(PollingEndpointFilter())
+    logger.info("Applied polling endpoint filter to uvicorn access logger")
+
     logger.info("Starting Session Manager API")
 
     # Create session manager

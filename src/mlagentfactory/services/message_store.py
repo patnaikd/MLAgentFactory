@@ -30,6 +30,7 @@ class MessageType(str, Enum):
     TODO_UPDATE = "todo_update"
     SESSION_ID = "session_id"
     TOTAL_COST = "total_cost"
+    PROCESSING_COMPLETE = "processing_complete"
 
 
 class MessageStore:
