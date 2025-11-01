@@ -58,7 +58,7 @@ def _agent_process_worker(
     async def run_agent():
         """Async function to run the agent."""
         logger.info(f"[PROCESS-{session_id[:8]}] Initializing ChatAgent...")
-        agent = ChatAgent()
+        agent = ChatAgent(enable_logging = True)
         await agent.initialize()
         logger.info(f"[PROCESS-{session_id[:8]}] ChatAgent initialized successfully")
 

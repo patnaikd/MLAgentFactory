@@ -87,6 +87,34 @@ This project uses the Claude Agent SDK to build autonomous agents. Agents are co
 - Agents run asynchronously using `asyncio`
 - The SDK handles tool use and task execution automatically
 
+### Logging and Replay
+
+The ChatAgent supports recording and replaying interactions using JSONL log files:
+
+**Recording Mode**: Logs all API calls and responses
+```python
+agent = ChatAgent(
+    enable_logging=True,
+    log_dir="./data/claude_logs",
+    session_prefix="my_session"
+)
+```
+
+**Replay Mode**: Replays from recorded log files (no API calls)
+```python
+agent = ChatAgent(
+    replay_log_file="./data/claude_logs/my_session_20251101_123456.jsonl"
+)
+```
+
+**Use Cases:**
+- Debugging: Capture exact API interactions
+- Testing: Replay sessions without API calls or credits
+- Development: Work offline with recorded sessions
+- Analysis: Examine conversation patterns and costs
+
+See [docs/LOGGING_AND_REPLAY.md](docs/LOGGING_AND_REPLAY.md) for detailed documentation and [examples/logging_example.py](examples/logging_example.py) for a complete demo.
+
 ### Available Tools
 
 The ChatAgent includes the following tools:

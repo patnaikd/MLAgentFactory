@@ -19,6 +19,7 @@ from claude_agent_sdk import (
 
 from ..utils.logging_config import initialize_observability
 from ..tools import file_io_tools, web_fetch_tools, kaggle_tools, uci_tools
+from .logging_client import LoggingClaudeSDKClient, FakeClaudeSDKClient
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +55,22 @@ Guidelines:
 
 
 class ChatAgent:
-    """A simple conversational agent that maintains conversation history."""
+    """A simple conversational agent that maintains conversation history.
 
-    def __init__(self):
+    Args:
+        enable_logging: If True, wraps client with LoggingClaudeSDKClient to record interactions
+        log_dir: Directory for log files (only used if enable_logging=True)
+        session_prefix: Prefix for log filenames (only used if enable_logging=True)
+        replay_log_file: If provided, uses FakeClaudeSDKClient to replay from this log file
+    """
+
+    def __init__(
+        self,
+        enable_logging: bool = False,
+        log_dir: str = "./data/claude_logs",
+        session_prefix: str = "session",
+        replay_log_file: Optional[str] = None
+    ):
         """Initialize the chat agent."""
         # Only initialize observability if not already configured
         # (Streamlit UI will handle initialization)
@@ -66,6 +80,12 @@ class ChatAgent:
         else:
             # Ensure DEBUG level is set even if handlers exist
             root_logger.setLevel(logging.DEBUG)
+
+        # Store client configuration
+        self.enable_logging = enable_logging
+        self.log_dir = log_dir
+        self.session_prefix = session_prefix
+        self.replay_log_file = replay_log_file
 
         self.web_server = create_sdk_mcp_server(
             name="web_tools",
@@ -129,7 +149,24 @@ class ChatAgent:
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""
         if not self._initialized:
-            self.client = ClaudeSDKClient(options=self.options)
+            # Choose client type based on configuration
+            if self.replay_log_file:
+                # Use fake client for replay
+                self.client = FakeClaudeSDKClient(log_file=self.replay_log_file)
+                logger.info(f"ChatAgent using FakeClaudeSDKClient with log: {self.replay_log_file}")
+            elif self.enable_logging:
+                # Use logging wrapper
+                self.client = LoggingClaudeSDKClient(
+                    options=self.options,
+                    log_dir=self.log_dir,
+                    session_prefix=self.session_prefix
+                )
+                logger.info(f"ChatAgent using LoggingClaudeSDKClient, logs in: {self.log_dir}")
+            else:
+                # Use standard client
+                self.client = ClaudeSDKClient(options=self.options)
+                logger.info("ChatAgent using standard ClaudeSDKClient")
+
             await self.client.connect()
             self._initialized = True
             logger.info("ChatAgent client initialized and connected")
