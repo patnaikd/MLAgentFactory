@@ -18,7 +18,8 @@ from claude_agent_sdk import (
 )
 
 from ..utils.logging_config import initialize_observability
-from ..tools import file_io_tools, web_fetch_tools, kaggle_tools
+from ..tools import file_io_tools, web_fetch_tools, kaggle_tools, uci_tools, markdown_to_pdf_tools
+from .logging_client import LoggingClaudeSDKClient, FakeClaudeSDKClient
 
 logger = logging.getLogger(__name__)
 
@@ -30,28 +31,48 @@ Always think step-by-step and explain your reasoning.
 If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
-- Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>yyyy-mm-dd_HH-MM-SS. and use it consistently.
-- Ensure all project files are saved in the project directory and subdirectories under "{current directory}/workspace/{project_name}/" consistently. Always use absolute path when referring to files.
-- If project directory exists, create a new folder with a unique name by adding a date-time suffix.
+- Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>_yyyy-mm-dd_HH-MM-SS. and use it consistently.
+- Ensure all project files are saved in the project directory and subdirectories under "workspace/<project_name>/" consistently. Always use absolute path when referring to files.
 - First create a plan before executing any code.
-- Make a running markdown document of implementation, results, next steps in index.md under this folder. Each entry should have data-time, make sure not to re-write or delete content from index.md. Include any analysis images and prefer markdown tables over plain text tables. Add extra new line before and after images and tables for better readability.
+- Make a running markdown paper with detailed report of every step of solving the machine learning problem including implementation details, analysis of results, detailed observations, next steps in paper.md in the project directory.
+  Include any analysis images and prefer markdown tables over plain text tables. Write the markdown paper as you go along.
+  Add extra new line before and after images and tables for better readability.
 - Use Python for coding tasks. Create virtual environments if needed.
-- Write clear, maintainable code with comments.
+- Write clear, maintainable code with comments. Include logging statements to trace execution.
 - Use best practices for data science and machine learning.
-- Move to the next TODO once the current is complete don't wait for user response.
+- Move to the next TODO once the current is complete don't wait for user response. After a TODO is complete, always provide an update in the markdown paper.
+- Use the TodoWrite tool to maintain a todo list in todo.md in the project directory. And keep updating it as you progress.
 - Prefer using the TodoWrite tool to update the todo list instead of writing it out in text.
 - Prefer using the FileWrite tool to create or update files instead of writing out file contents in text.
 - Prefer using PyTorch for deep learning tasks. Use TensorFlow only if absolutely necessary.
 - Use XGBoost or LightGBM for tabular data tasks.
 - Use pandas for data manipulation and analysis.
 - Use matplotlib or seaborn for visualizations.
+- Include images and plots in the index.md for better understanding of results.
+- Include images and plots in the resonse when relevant for better understanding.
+- Generate pdf reports from markdown using the markdown_to_pdf MCP server tool.
+- When solving ML problems, break down the problem into data preprocessing, exploratory data analysis, model selection, training, evaluation, and hyperparameter tuning.
+Remember to think step-by-step and explain your reasoning at each step.
 '''
 
 
 class ChatAgent:
-    """A simple conversational agent that maintains conversation history."""
+    """A simple conversational agent that maintains conversation history.
 
-    def __init__(self):
+    Args:
+        enable_logging: If True, wraps client with LoggingClaudeSDKClient to record interactions
+        log_dir: Directory for log files (only used if enable_logging=True)
+        session_prefix: Prefix for log filenames (only used if enable_logging=True)
+        replay_log_file: If provided, uses FakeClaudeSDKClient to replay from this log file
+    """
+
+    def __init__(
+        self,
+        enable_logging: bool = False,
+        log_dir: str = "./data/claude_logs",
+        session_prefix: str = "session",
+        replay_log_file: Optional[str] = None
+    ):
         """Initialize the chat agent."""
         # Only initialize observability if not already configured
         # (Streamlit UI will handle initialization)
@@ -61,6 +82,12 @@ class ChatAgent:
         else:
             # Ensure DEBUG level is set even if handlers exist
             root_logger.setLevel(logging.DEBUG)
+
+        # Store client configuration
+        self.enable_logging = enable_logging
+        self.log_dir = log_dir
+        self.session_prefix = session_prefix
+        self.replay_log_file = replay_log_file
 
         self.web_server = create_sdk_mcp_server(
             name="web_tools",
@@ -81,13 +108,33 @@ class ChatAgent:
             ]
         )
 
+        self.uci_server = create_sdk_mcp_server(
+            name="uci_tools",
+            version="1.0.0",
+            tools=[
+                uci_tools.uci_list_datasets,
+                uci_tools.uci_fetch_dataset,
+                uci_tools.uci_get_dataset_info
+            ]
+        )
+
+        self.markdown_pdf_server = create_sdk_mcp_server(
+            name="markdown_pdf_tools",
+            version="1.0.0",
+            tools=[
+                markdown_to_pdf_tools.markdown_to_pdf
+            ]
+        )
+
         # Configure agent options
-    
+
         self.options = ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT,
             mcp_servers={
                 "web": self.web_server,
-                "kaggle": self.kaggle_server
+                "kaggle": self.kaggle_server,
+                "uci": self.uci_server,
+                "markdown_pdf": self.markdown_pdf_server
             },
             allowed_tools=[
                 "fetch_webpage",
@@ -96,7 +143,11 @@ class ChatAgent:
                 "kaggle_download_competition_data",
                 "kaggle_submit_competition",
                 "kaggle_list_submissions",
-                "kaggle_competition_leaderboard"
+                "kaggle_competition_leaderboard",
+                "uci_list_datasets",
+                "uci_fetch_dataset",
+                "uci_get_dataset_info",
+                "markdown_to_pdf"
             ],
             permission_mode="bypassPermissions"
         )
@@ -105,12 +156,29 @@ class ChatAgent:
         self._initialized = False
         self.session_id: Optional[str] = None
         self.total_cost: float = 0.0
-        logger.info("ChatAgent initialized with file I/O, web, and Kaggle tools")
+        logger.info("ChatAgent initialized with file I/O, web, Kaggle, UCI ML Repository, and Markdown-to-PDF tools")
 
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""
         if not self._initialized:
-            self.client = ClaudeSDKClient(options=self.options)
+            # Choose client type based on configuration
+            if self.replay_log_file:
+                # Use fake client for replay
+                self.client = FakeClaudeSDKClient(log_file=self.replay_log_file)
+                logger.info(f"ChatAgent using FakeClaudeSDKClient with log: {self.replay_log_file}")
+            elif self.enable_logging:
+                # Use logging wrapper
+                self.client = LoggingClaudeSDKClient(
+                    options=self.options,
+                    log_dir=self.log_dir,
+                    session_prefix=self.session_prefix
+                )
+                logger.info(f"ChatAgent using LoggingClaudeSDKClient, logs in: {self.log_dir}")
+            else:
+                # Use standard client
+                self.client = ClaudeSDKClient(options=self.options)
+                logger.info("ChatAgent using standard ClaudeSDKClient")
+
             await self.client.connect()
             self._initialized = True
             logger.info("ChatAgent client initialized and connected")
@@ -139,6 +207,7 @@ class ChatAgent:
             - "todo_update": TodoWrite tool usage (content: list of todos, tool_use_id: str)
             - "session_id": Session identifier (content: str)
             - "total_cost": Total cost in USD (content: float)
+            - "processing_complete": Signal that agent is done processing (content: str)
         """
         if not self.client:
             raise RuntimeError("ChatAgent must be used as an async context manager")
@@ -309,6 +378,13 @@ class ChatAgent:
                 logger.warning(f"[INCOMING] Unexpected message type: {type(msg).__name__}, content: {msg!r}")
 
         logger.info(f"[INCOMING] Response stream completed. Total messages received: {response_count}")
+
+        # Emit processing_complete signal to indicate agent is done processing
+        logger.info("[INCOMING] Emitting processing_complete signal")
+        yield {
+            "type": "processing_complete",
+            "content": "Agent has finished processing this query"
+        }
 
     async def chat(self, message: str) -> str:
         """Send a message and return the complete response.
