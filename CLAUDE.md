@@ -190,13 +190,13 @@ iris = fetch_ucirepo(name='Iris')
 ### Markdown to PDF Setup
 
 The Markdown to PDF tool is ready to use out of the box:
-1. Install dependencies: `uv add markdown weasyprint` (already done)
-2. No additional setup required - works offline
-3. Supports three built-in styles:
+1. Install dependencies: `uv add markdown reportlab` (already done)
+2. No additional setup required - works offline on all platforms including macOS
+3. Uses ReportLab (pure Python PDF generation, no system dependencies)
+4. Supports three built-in styles:
    - `default` - Clean, modern styling with good readability
    - `github` - GitHub-flavored markdown appearance
    - `minimal` - Simple, classic document style
-4. Custom CSS files can be provided for advanced styling
 
 **Example Usage:**
 ```python

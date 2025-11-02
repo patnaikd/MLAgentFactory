@@ -631,6 +631,12 @@ wheels = [
 ]
 
 [[package]]
+name = "docopt"
+version = "0.6.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/55/8f8cab2afd404cf578136ef2cc5dfb50baa1761b68c9da1fb1e4eed343c9/docopt-0.6.2.tar.gz", hash = "sha256:49b3a825280bd66b3aa83585ef59c4a8c82f2c8a522dbe754a8bc8d08c85c491", size = 25901, upload-time = "2014-06-16T11:18:57.406Z" }
+
+[[package]]
 name = "docstring-parser"
 version = "0.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1602,6 +1608,15 @@ wheels = [
 ]
 
 [[package]]
+name = "markdown2"
+version = "2.5.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/f8/b2ae8bf5f28f9b510ae097415e6e4cb63226bb28d7ee01aec03a755ba03b/markdown2-2.5.4.tar.gz", hash = "sha256:a09873f0b3c23dbfae589b0080587df52ad75bb09a5fa6559147554736676889", size = 145652, upload-time = "2025-07-27T16:16:24.307Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/06/2697b5043c3ecb720ce0d243fc7cf5024c0b5b1e450506e9b21939019963/markdown2-2.5.4-py3-none-any.whl", hash = "sha256:3c4b2934e677be7fec0e6f2de4410e116681f4ad50ec8e5ba7557be506d3f439", size = 49954, upload-time = "2025-07-27T16:16:23.026Z" },
+]
+
+[[package]]
 name = "markupsafe"
 version = "3.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1753,6 +1768,17 @@ wheels = [
 ]
 
 [[package]]
+name = "md2pdf"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docopt" },
+    { name = "markdown2" },
+    { name = "weasyprint" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/de/b0/adbef5356f97a6d33c7811805b06e3774c7a58ea70dc28039ae4ad1ba1be/md2pdf-1.0.1.tar.gz", hash = "sha256:3d5aab77dcd5b6f5827b193819ab1a8c1cec506ce5f6c777c3411b703352cd98", size = 6377, upload-time = "2023-04-12T09:11:46.781Z" }
+
+[[package]]
 name = "mdurl"
 version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1786,18 +1812,19 @@ dependencies = [
     { name = "lxml" },
     { name = "markdown" },
     { name = "matplotlib" },
+    { name = "md2pdf" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-instrumentation" },
     { name = "opentelemetry-instrumentation-requests" },
     { name = "opentelemetry-sdk" },
     { name = "playwright" },
     { name = "python-dotenv" },
+    { name = "reportlab" },
     { name = "requests" },
     { name = "seaborn" },
     { name = "streamlit" },
     { name = "ucimlrepo" },
     { name = "uvicorn" },
-    { name = "weasyprint" },
 ]
 
 [package.metadata]
@@ -1813,18 +1840,19 @@ requires-dist = [
     { name = "lxml", specifier = ">=6.0.2" },
     { name = "markdown", specifier = ">=3.7" },
     { name = "matplotlib", specifier = ">=3.10.7" },
+    { name = "md2pdf", specifier = ">=1.0.1" },
     { name = "opentelemetry-api", specifier = ">=1.37.0" },
     { name = "opentelemetry-instrumentation", specifier = ">=0.58b0" },
     { name = "opentelemetry-instrumentation-requests", specifier = ">=0.58b0" },
     { name = "opentelemetry-sdk", specifier = ">=1.37.0" },
     { name = "playwright", specifier = ">=1.55.0" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
+    { name = "reportlab", specifier = ">=4.4.4" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "streamlit", specifier = ">=1.50.0" },
     { name = "ucimlrepo", specifier = ">=0.0.7" },
     { name = "uvicorn", specifier = ">=0.37.0" },
-    { name = "weasyprint", specifier = ">=63.0" },
 ]
 
 [[package]]
@@ -2737,6 +2765,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/2f/db/98b5c277be99dd18bfd91dd04e1b759cad18d1a338188c936e92f921c7e2/referencing-0.36.2.tar.gz", hash = "sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa", size = 74744, upload-time = "2025-01-25T08:48:16.138Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/b1/3baf80dc6d2b7bc27a95a67752d0208e410351e3feb4eb78de5f77454d8d/referencing-0.36.2-py3-none-any.whl", hash = "sha256:e8699adbbf8b5c7de96d8ffa0eb5c158b3beafce084968e2ea8bb08c6794dcd0", size = 26775, upload-time = "2025-01-25T08:48:14.241Z" },
+]
+
+[[package]]
+name = "reportlab"
+version = "4.4.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "charset-normalizer" },
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f8/fa/ed71f3e750afb77497641eb0194aeda069e271ce6d6931140f8787e0e69a/reportlab-4.4.4.tar.gz", hash = "sha256:cb2f658b7f4a15be2cc68f7203aa67faef67213edd4f2d4bdd3eb20dab75a80d", size = 3711935, upload-time = "2025-09-19T10:43:36.502Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/66/e040586fe6f9ae7f3a6986186653791fb865947f0b745290ee4ab026b834/reportlab-4.4.4-py3-none-any.whl", hash = "sha256:299b3b0534e7202bb94ed2ddcd7179b818dcda7de9d8518a57c85a58a1ebaadb", size = 1954981, upload-time = "2025-09-19T10:43:33.589Z" },
 ]
 
 [[package]]

@@ -288,15 +288,63 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
 
                 # Detect content type
                 if display_content.strip().startswith('{') or display_content.strip().startswith('['):
-                    return f"\n\n**🔧 Tool Result:**\n```json\n{display_content}\n```\n\n"
+                    return f"\n\n**🔧 Tool Result (json):**\n```json\n{display_content}\n```\n\n"
                 elif display_content.strip().startswith('<'):
-                    return f"\n\n**🔧 Tool Result:**\n```html\n{display_content}\n```\n\n"
+                    return f"\n\n**🔧 Tool Result (html):**\n```html\n{display_content}\n```\n\n"
                 else:
-                    return f"\n\n**🔧 Tool Result:**\n```\n{display_content}\n```\n\n"
+                    return f"\n\n**🔧 Tool Result: (text)**\n```\n{display_content}\n```\n\n"
             elif isinstance(result_content, list):
-                return f"\n\n**🔧 Tool Result:** ({len(result_content)} items)\n```json\n{result_content}\n```\n\n"
+                # Check if it's a structured list with 'type' fields (text/image)
+                if result_content and isinstance(result_content[0], dict) and 'type' in result_content[0]:
+                    formatted_parts = []
+                    formatted_parts.append(f"\n\n**🔧 Tool Result:** ({len(result_content)} items)\n")
+
+                    for idx, item in enumerate(result_content, 1):
+                        item_type = item.get('type', 'unknown')
+
+                        if item_type == 'text':
+                            text_content = item.get('text', '')
+                            # Truncate long text content
+                            max_display_length = 2000
+                            if len(text_content) > max_display_length:
+                                text_content = text_content[:max_display_length] + "\n... (truncated)"
+                            formatted_parts.append(f"\n**Item {idx} (text):**\n```\n{text_content}\n```\n")
+
+                        elif item_type == 'image':
+                            source = item.get('source', {})
+                            source_type = source.get('type', 'unknown')
+
+                            if source_type == 'base64':
+                                # Get image data
+                                image_data = source.get('data', '')
+                                # Show a preview indicator
+                                data_preview = image_data[:50] + '...' if len(image_data) > 50 else image_data
+                                formatted_parts.append(f"\n**Item {idx} (image):**\n")
+                                formatted_parts.append(f"- Type: base64 encoded image\n")
+                                formatted_parts.append(f"- Size: {len(image_data)} characters\n")
+                                formatted_parts.append(f"- Preview: {data_preview}\n")
+
+                                # Try to decode and display the image
+                                try:
+                                    import base64
+                                    from io import BytesIO
+                                    image_bytes = base64.b64decode(image_data)
+                                    formatted_parts.append(f"\n*[Image data available - {len(image_bytes)} bytes]*\n")
+                                except Exception as e:
+                                    formatted_parts.append(f"\n*[Unable to decode image: {str(e)}]*\n")
+                            else:
+                                formatted_parts.append(f"\n**Item {idx} (image):**\n- Source type: {source_type}\n")
+
+                        else:
+                            # Unknown type, show as JSON
+                            formatted_parts.append(f"\n**Item {idx} ({item_type}):**\n```json\n{item}\n```\n")
+
+                    return "".join(formatted_parts) + "\n"
+                else:
+                    # Generic list, show as JSON
+                    return f"\n\n**🔧 Tool Result (json-list):** ({len(result_content)} items)\n```json\n{result_content}\n```\n\n"
             else:
-                return f"\n\n**🔧 Tool Result:**\n```\n{str(result_content)}\n```\n\n"
+                return f"\n\n**🔧 Tool Result (unknown type):**\n```\n{str(result_content)}\n```\n\n"
 
     elif message_type == "session_id":
         st.session_state.agent_session_id = content
@@ -568,18 +616,18 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.markdown("## 💬 Chat Assistant")
-        st.markdown("""
-        This assistant uses the Session Manager API for long-running agent sessions.
+        # st.markdown("## 💬 Chat Assistant")
+        # st.markdown("""
+        # This assistant uses the Session Manager API for long-running agent sessions.
 
-        Features:
-        - Isolated agent processes
-        - Pull-based message streaming
-        - Persistent message storage
-        - Session management
-        """)
+        # Features:
+        # - Isolated agent processes
+        # - Pull-based message streaming
+        # - Persistent message storage
+        # - Session management
+        # """)
 
-        st.markdown("---")
+        # st.markdown("---")
 
         # Create new session button
         if st.button("🔄 Start New Session"):

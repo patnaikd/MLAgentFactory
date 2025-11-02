@@ -680,16 +680,15 @@ def main():
 
     # Sidebar
     with st.sidebar:
-        st.markdown("## 💬 Chat Assistant")
-        st.markdown("""
-        This assistant can:
-        - Answer your questions
-        - Maintain conversation history
-        - Use tools like file I/O, web fetch, and Kaggle
-        - Remember context from previous messages
-        """)
+        # st.markdown("## 💬 ML Agent")
+        # st.markdown("""
+        # This assistant can:
+        # - Solve machine learning tasks
+        # - Write and execute code
+        # - Generate reports and documentation
+        # """)
 
-        st.markdown("---")
+        # st.markdown("---")
 
         # Clear conversation button
         if st.button("🔄 Start New Conversation"):

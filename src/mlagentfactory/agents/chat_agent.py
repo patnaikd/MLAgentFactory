@@ -37,7 +37,7 @@ Guidelines:
 - Make a running markdown paper with detailed report of every step of solving the machine learning problem including implementation details, analysis of results, detailed observations, next steps in paper.md in the project directory.
   Include any analysis images and prefer markdown tables over plain text tables. Write the markdown paper as you go along.
   Add extra new line before and after images and tables for better readability.
-- Use Python for coding tasks. Create virtual environments if needed.
+- Use Python for coding tasks. Use uv to manage Python dependencies, virtual environments, and execution.
 - Write clear, maintainable code with comments. Include logging statements to trace execution.
 - Use best practices for data science and machine learning.
 - Move to the next TODO once the current is complete don't wait for user response. After a TODO is complete, always provide an update in the markdown paper.
@@ -48,6 +48,17 @@ Guidelines:
 - Use XGBoost or LightGBM for tabular data tasks.
 - Use pandas for data manipulation and analysis.
 - Use matplotlib or seaborn for visualizations.
+- for preparing the submission file, always refer to sample_submission.csv file in the data directory for the correct format.
+- When working on Kaggle competitions:
+  - Use the Kaggle MCP server tools to interact with Kaggle.
+  - Always download competition data using the kaggle_download_competition_data tool.
+  - Complete and not sample data should be used for training and generating predictions.
+  - Always submit predictions using the kaggle_submit_competition tool.
+  - Use the kaggle_list_submissions and kaggle_competition_leaderboard tools to monitor submission status and leaderboard position.
+- When working with UCI ML Repository datasets:
+  - Use the UCI MCP server tools to interact with the UCI ML Repository.
+  - Always fetch datasets using the uci_fetch_dataset tool.
+  - Use the uci_get_dataset_info tool to understand dataset details.
 - Include images and plots in the index.md for better understanding of results.
 - Include images and plots in the resonse when relevant for better understanding.
 - Generate pdf reports from markdown using the markdown_to_pdf MCP server tool.
