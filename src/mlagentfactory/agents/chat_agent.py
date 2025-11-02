@@ -18,7 +18,7 @@ from claude_agent_sdk import (
 )
 
 from ..utils.logging_config import initialize_observability
-from ..tools import file_io_tools, web_fetch_tools, kaggle_tools, uci_tools
+from ..tools import file_io_tools, web_fetch_tools, kaggle_tools, uci_tools, markdown_to_pdf_tools
 from .logging_client import LoggingClaudeSDKClient, FakeClaudeSDKClient
 
 logger = logging.getLogger(__name__)
@@ -32,17 +32,16 @@ If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
 - Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>_yyyy-mm-dd_HH-MM-SS. and use it consistently.
-- Ensure all project files are saved in the project directory and subdirectories under "{current directory}/workspace/{project_name}/" consistently. Always use absolute path when referring to files.
-- If project directory exists, create a new folder with a unique name by adding a date-time suffix.
+- Ensure all project files are saved in the project directory and subdirectories under "workspace/<project_name>/" consistently. Always use absolute path when referring to files.
 - First create a plan before executing any code.
-- Make a running markdown document of implementation, results, next steps in index.md under this folder. 
-  Each entry should have data-time, make sure not to re-write or delete content from index.md. 
-  Include any analysis images and prefer markdown tables over plain text tables. 
+- Make a running markdown paper with detailed report of every step of solving the machine learning problem including implementation details, analysis of results, detailed observations, next steps in paper.md in the project directory.
+  Include any analysis images and prefer markdown tables over plain text tables. Write the markdown paper as you go along.
   Add extra new line before and after images and tables for better readability.
 - Use Python for coding tasks. Create virtual environments if needed.
-- Write clear, maintainable code with comments.
+- Write clear, maintainable code with comments. Include logging statements to trace execution.
 - Use best practices for data science and machine learning.
-- Move to the next TODO once the current is complete don't wait for user response.
+- Move to the next TODO once the current is complete don't wait for user response. After a TODO is complete, always provide an update in the markdown paper.
+- Use the TodoWrite tool to maintain a todo list in todo.md in the project directory. And keep updating it as you progress.
 - Prefer using the TodoWrite tool to update the todo list instead of writing it out in text.
 - Prefer using the FileWrite tool to create or update files instead of writing out file contents in text.
 - Prefer using PyTorch for deep learning tasks. Use TensorFlow only if absolutely necessary.
@@ -51,6 +50,9 @@ Guidelines:
 - Use matplotlib or seaborn for visualizations.
 - Include images and plots in the index.md for better understanding of results.
 - Include images and plots in the resonse when relevant for better understanding.
+- Generate pdf reports from markdown using the markdown_to_pdf MCP server tool.
+- When solving ML problems, break down the problem into data preprocessing, exploratory data analysis, model selection, training, evaluation, and hyperparameter tuning.
+Remember to think step-by-step and explain your reasoning at each step.
 '''
 
 
@@ -116,14 +118,23 @@ class ChatAgent:
             ]
         )
 
+        self.markdown_pdf_server = create_sdk_mcp_server(
+            name="markdown_pdf_tools",
+            version="1.0.0",
+            tools=[
+                markdown_to_pdf_tools.markdown_to_pdf
+            ]
+        )
+
         # Configure agent options
-    
+
         self.options = ClaudeAgentOptions(
             system_prompt=SYSTEM_PROMPT,
             mcp_servers={
                 "web": self.web_server,
                 "kaggle": self.kaggle_server,
-                "uci": self.uci_server
+                "uci": self.uci_server,
+                "markdown_pdf": self.markdown_pdf_server
             },
             allowed_tools=[
                 "fetch_webpage",
@@ -135,7 +146,8 @@ class ChatAgent:
                 "kaggle_competition_leaderboard",
                 "uci_list_datasets",
                 "uci_fetch_dataset",
-                "uci_get_dataset_info"
+                "uci_get_dataset_info",
+                "markdown_to_pdf"
             ],
             permission_mode="bypassPermissions"
         )
@@ -144,7 +156,7 @@ class ChatAgent:
         self._initialized = False
         self.session_id: Optional[str] = None
         self.total_cost: float = 0.0
-        logger.info("ChatAgent initialized with file I/O, web, Kaggle, and UCI ML Repository tools")
+        logger.info("ChatAgent initialized with file I/O, web, Kaggle, UCI ML Repository, and Markdown-to-PDF tools")
 
     async def initialize(self):
         """Initialize the client. Call this once before using the agent."""

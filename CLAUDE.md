@@ -75,6 +75,8 @@ uv sync
 - `kaggle` - Official Kaggle API for downloading datasets and competition interaction
 - `ucimlrepo` - Python library for accessing UCI Machine Learning Repository datasets
 - `playwright` - Browser automation for JavaScript-heavy web content
+- `markdown` - Markdown parser for converting .md files to HTML
+- `weasyprint` - HTML to PDF converter with CSS support
 - `jupyter` / `ipykernel` - Jupyter notebook support
 
 ## Architecture Notes
@@ -144,6 +146,12 @@ The ChatAgent includes the following tools:
 - `uci_fetch_dataset` - Fetch dataset by ID or name, optionally save to CSV files
 - `uci_get_dataset_info` - Get detailed metadata about a dataset without downloading data
 
+**Markdown to PDF Tools:**
+- `markdown_to_pdf` - Convert markdown files to professionally formatted PDF documents
+  - Supports standard markdown syntax (headers, lists, code blocks, tables, images)
+  - Multiple styling options: `default`, `github`, `minimal`, or custom CSS
+  - Automatic page breaks and formatting optimization
+
 ### Kaggle Setup
 
 To use Kaggle tools, you need to:
@@ -178,6 +186,39 @@ y = iris.data.targets
 # Or by name
 iris = fetch_ucirepo(name='Iris')
 ```
+
+### Markdown to PDF Setup
+
+The Markdown to PDF tool is ready to use out of the box:
+1. Install dependencies: `uv add markdown weasyprint` (already done)
+2. No additional setup required - works offline
+3. Supports three built-in styles:
+   - `default` - Clean, modern styling with good readability
+   - `github` - GitHub-flavored markdown appearance
+   - `minimal` - Simple, classic document style
+4. Custom CSS files can be provided for advanced styling
+
+**Example Usage:**
+```python
+# Convert with default styling
+markdown_to_pdf("README.md")
+
+# Convert with custom output path and GitHub styling
+markdown_to_pdf("docs/guide.md", output_pdf="output/guide.pdf", css_style="github")
+
+# Use custom CSS file
+markdown_to_pdf("report.md", css_style="styles/custom.css")
+```
+
+**Supported Markdown Features:**
+- Headers (h1-h6)
+- Bold, italic, and inline code
+- Code blocks with syntax highlighting
+- Tables
+- Lists (ordered and unordered)
+- Blockquotes
+- Horizontal rules
+- Links and images
 
 ## Web UI Implementations
 
