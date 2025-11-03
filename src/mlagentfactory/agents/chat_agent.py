@@ -2,6 +2,8 @@
 import json
 import asyncio
 import logging
+import os
+from datetime import datetime
 from typing import AsyncGenerator, Dict, List, Optional
 
 from claude_agent_sdk import (
@@ -32,7 +34,7 @@ If you use a tool, explain why you are using it and what you expect to find.
 
 Guidelines:
 - Pick a name for the project with a unique name by adding a date-time suffix, format: <project_name>_yyyy-mm-dd_HH-MM-SS. and use it consistently.
-- Ensure all project files are saved in the project directory and subdirectories under "workspace/<project_name>/" consistently. Always use absolute path when referring to files.
+- Ensure all project files are saved in the project directory and subdirectories under "<current directory>workspace/<project_name>/" consistently. Always use absolute path when referring to files.
 - First create a plan before executing any code.
 - Make a running markdown paper with detailed report of every step of solving the machine learning problem including implementation details, analysis of results, detailed observations, next steps in paper.md in the project directory.
   Include any analysis images and prefer markdown tables over plain text tables. Write the markdown paper as you go along.
@@ -137,10 +139,16 @@ class ChatAgent:
             ]
         )
 
-        # Configure agent options
+        # Configure agent options with enhanced system prompt
+        current_dir = os.getcwd()
+        current_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        enhanced_system_prompt = f"""{SYSTEM_PROMPT}\n\n
+        Current Working Directory: "{current_dir}"\n
+        Current DateTime: "{current_datetime}"\n"""
 
         self.options = ClaudeAgentOptions(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=enhanced_system_prompt,
             mcp_servers={
                 "web": self.web_server,
                 "kaggle": self.kaggle_server,

@@ -30,3 +30,8 @@ dependencies = [
     "ucimlrepo>=0.0.7",
     "uvicorn>=0.37.0",
 ]
+
+[tool.uv.workspace]
+members = [
+    "workspace/spaceship_titanic_2025-11-02_18-40-49",
+]

@@ -9,9 +9,11 @@ import streamlit.components.v1 as components
 import requests
 import logging
 import time
+import base64
+from io import BytesIO
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple, Union
 
 # Handle both relative and absolute imports for flexibility
 try:
@@ -217,14 +219,17 @@ def stop_session(session_id: str) -> bool:
 # Message Processing
 # ===========================
 
-def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
-    """Process a message chunk and return display text.
+def process_message_chunk(chunk: Dict[str, Any]) -> Union[Tuple[str, List[bytes]], str, None]:
+    """Process a message chunk and return display content.
 
     Args:
         chunk: Message chunk from API (the 'content' field from the message)
 
     Returns:
-        Display text or None
+        Either:
+        - A tuple of (text, list_of_image_bytes) for messages with images
+        - A string for text-only messages
+        - None for metadata updates
     """
     # chunk is already the 'content' object from the API message
     # It has structure: {"type": "text", "content": "...", ...}
@@ -297,6 +302,7 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
                 # Check if it's a structured list with 'type' fields (text/image)
                 if result_content and isinstance(result_content[0], dict) and 'type' in result_content[0]:
                     formatted_parts = []
+                    images = []  # Collect decoded images
                     formatted_parts.append(f"\n\n**🔧 Tool Result:** ({len(result_content)} items)\n")
 
                     for idx, item in enumerate(result_content, 1):
@@ -315,23 +321,17 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
                             source_type = source.get('type', 'unknown')
 
                             if source_type == 'base64':
-                                # Get image data
+                                # Get image data and media type
                                 image_data = source.get('data', '')
-                                # Show a preview indicator
-                                data_preview = image_data[:50] + '...' if len(image_data) > 50 else image_data
-                                formatted_parts.append(f"\n**Item {idx} (image):**\n")
-                                formatted_parts.append(f"- Type: base64 encoded image\n")
-                                formatted_parts.append(f"- Size: {len(image_data)} characters\n")
-                                formatted_parts.append(f"- Preview: {data_preview}\n")
+                                media_type = source.get('media_type', 'image/png')
 
                                 # Try to decode and display the image
                                 try:
-                                    import base64
-                                    from io import BytesIO
                                     image_bytes = base64.b64decode(image_data)
-                                    formatted_parts.append(f"\n*[Image data available - {len(image_bytes)} bytes]*\n")
+                                    images.append(image_bytes)
+                                    formatted_parts.append(f"\n**Item {idx} (image):**\n*[Image displayed below - {len(image_bytes)} bytes, {media_type}]*\n")
                                 except Exception as e:
-                                    formatted_parts.append(f"\n*[Unable to decode image: {str(e)}]*\n")
+                                    formatted_parts.append(f"\n**Item {idx} (image):**\n*[Unable to decode image: {str(e)}]*\n")
                             else:
                                 formatted_parts.append(f"\n**Item {idx} (image):**\n- Source type: {source_type}\n")
 
@@ -339,7 +339,13 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
                             # Unknown type, show as JSON
                             formatted_parts.append(f"\n**Item {idx} ({item_type}):**\n```json\n{item}\n```\n")
 
-                    return "".join(formatted_parts) + "\n"
+                    text_result = "".join(formatted_parts) + "\n"
+
+                    # Return tuple of (text, images) if images exist, otherwise just text
+                    if images:
+                        return (text_result, images)
+                    else:
+                        return text_result
                 else:
                     # Generic list, show as JSON
                     return f"\n\n**🔧 Tool Result (json-list):** ({len(result_content)} items)\n```json\n{result_content}\n```\n\n"
@@ -373,10 +379,30 @@ def process_message_chunk(chunk: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def render_chat_message(role: str, content: str):
-    """Render a chat message with appropriate styling."""
+def render_chat_message(role: str, content: Union[str, Dict[str, Any]]):
+    """Render a chat message with appropriate styling.
+
+    Args:
+        role: Message role (user/assistant)
+        content: Either a string (text only) or dict with 'text' and optional 'images' keys
+    """
     with st.chat_message(role):
-        st.markdown(content)
+        # Handle both old string format and new dict format
+        if isinstance(content, dict):
+            # Render text content
+            if content.get('text'):
+                st.markdown(content['text'])
+
+            # Render images
+            if content.get('images'):
+                for img_bytes in content['images']:
+                    try:
+                        st.image(img_bytes, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Failed to display image: {e}")
+        else:
+            # Legacy string format
+            st.markdown(content)
 
 
 @st.fragment(run_every=f"{POLL_INTERVAL}s")
@@ -411,9 +437,28 @@ def poll_and_display_messages():
             chunk = msg["content"]
 
             # Process the chunk and add to current response
-            display_text = process_message_chunk(chunk)
-            if display_text:
-                st.session_state.current_response += display_text
+            result = process_message_chunk(chunk)
+            if result:
+                # Handle tuple (text, images) or just text
+                if isinstance(result, tuple):
+                    display_text, images = result
+                    # Store text separately
+                    if display_text:
+                        if isinstance(st.session_state.current_response, str):
+                            st.session_state.current_response = {'text': st.session_state.current_response, 'images': []}
+                        st.session_state.current_response['text'] += display_text
+
+                    # Store images separately
+                    if images:
+                        if isinstance(st.session_state.current_response, str):
+                            st.session_state.current_response = {'text': st.session_state.current_response, 'images': []}
+                        st.session_state.current_response['images'].extend(images)
+                else:
+                    # Just text
+                    if isinstance(st.session_state.current_response, dict):
+                        st.session_state.current_response['text'] += result
+                    else:
+                        st.session_state.current_response += result
 
             # Update last_message_id
             st.session_state.last_message_id = message_id
@@ -679,7 +724,18 @@ def main():
                 # Display current response if processing
                 if st.session_state.is_processing and st.session_state.current_response:
                     with st.chat_message("assistant"):
-                        st.markdown(st.session_state.current_response)
+                        # Handle both string and dict format
+                        if isinstance(st.session_state.current_response, dict):
+                            if st.session_state.current_response.get('text'):
+                                st.markdown(st.session_state.current_response['text'])
+                            if st.session_state.current_response.get('images'):
+                                for img_bytes in st.session_state.current_response['images']:
+                                    try:
+                                        st.image(img_bytes, use_container_width=True)
+                                    except Exception as e:
+                                        st.error(f"Failed to display image: {e}")
+                        else:
+                            st.markdown(st.session_state.current_response)
                         st.caption("*typing...*")
 
                 # Add a marker element at the bottom for auto-scroll
@@ -716,7 +772,14 @@ def main():
                 if st.session_state.is_processing:
                     with st.status("🤖 Agent is thinking...", expanded=False, state="running"):
                         st.caption(f"Polling for responses... (last message ID: {st.session_state.last_message_id})")
-                        st.caption(f"Messages in response: {len(st.session_state.current_response)} characters")
+
+                        # Calculate response length
+                        if isinstance(st.session_state.current_response, dict):
+                            text_len = len(st.session_state.current_response.get('text', ''))
+                            img_count = len(st.session_state.current_response.get('images', []))
+                            st.caption(f"Messages in response: {text_len} characters, {img_count} images")
+                        else:
+                            st.caption(f"Messages in response: {len(st.session_state.current_response)} characters")
 
                         # Stop processing button
                         if st.button("⏹️ Stop Processing", key=f"stop_{st.session_state.last_message_id}"):
