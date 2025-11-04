@@ -633,12 +633,12 @@ def render_logs_tab():
 def main():
     """Main application entry point."""
     st.set_page_config(
-        page_title="MLAgentFactory - Session Manager",
+        page_title="MLAgentFactory",
         page_icon="🤖",
         layout="wide",
         initial_sidebar_state="expanded",
         menu_items={
-            "About": "MLAgentFactory with Session Manager API integration.",
+            "About": "MLAgentFactory is your Agentic AI for solving machine learning problems.",
         }
     )
 
@@ -652,7 +652,7 @@ def main():
     setup_logging()
 
     # Header
-    st.title("🤖 MLAgentFactory - Session Manager")
+    st.title("🤖 MLAgentFactory")
 
     # Display session info
     if st.session_state.session_id:
