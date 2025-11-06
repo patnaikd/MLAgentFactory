@@ -1,7 +1,6 @@
 """Tools for converting markdown files to PDF format."""
 import logging
 from pathlib import Path
-from typing import Optional
 
 from claude_agent_sdk import tool
 
@@ -53,13 +52,15 @@ async def markdown_to_pdf(args: dict) -> dict:
         # Import required libraries
         try:
             import markdown
-            from weasyprint import HTML, CSS
-            from weasyprint.text.fonts import FontConfiguration
+            from reportlab.lib.pagesizes import letter
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib.units import inch
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
         except ImportError as e:
             return {
                 "content": [{
                     "type": "text",
-                    "text": f"Required libraries not installed. Install with: uv add markdown weasyprint\nError: {e}"
+                    "text": f"Required libraries not installed. Install with: uv add markdown reportlab\nError: {e}"
                 }],
                 "is_error": True
             }
@@ -109,40 +110,103 @@ async def markdown_to_pdf(args: dict) -> dict:
         )
         html_content = md_processor.convert(markdown_content)
 
-        # Get CSS styling
-        css_content = _get_css_style(css_style)
-
-        # Create full HTML document
-        full_html = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{md_path.stem}</title>
-    <style>
-        {css_content}
-    </style>
-</head>
-<body>
-    <div class="container">
-        {html_content}
-    </div>
-</body>
-</html>
-"""
-
-        # Convert HTML to PDF
+        # Convert HTML to PDF using reportlab
         logger.info(f"Generating PDF: {output_pdf_path}")
-        font_config = FontConfiguration()
-        html_doc = HTML(string=full_html)
 
-        # Use CSS for styling
-        stylesheets = [CSS(string=css_content, font_config=font_config)]
-        html_doc.write_pdf(
-            output_pdf_path,
-            stylesheets=stylesheets,
-            font_config=font_config
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            str(output_pdf_path),
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=18,
         )
+
+        # Container for the 'Flowable' objects
+        elements = []
+
+        # Get styles
+        styles = getSampleStyleSheet()
+
+        # Create custom styles based on css_style parameter
+        style_name = css_style if css_style in ['github', 'minimal'] else 'default'
+        _add_custom_styles(styles, style_name)
+
+        # Simple HTML to Flowable conversion
+        # This is a basic implementation - for complex HTML, consider using reportlab.platypus.html
+        from html.parser import HTMLParser
+
+        class HTMLToFlowables(HTMLParser):
+            def __init__(self, styles):
+                super().__init__()
+                self.styles = styles
+                self.elements = []
+                self.current_text = []
+                self.current_style = styles['Normal']
+                self.in_code = False
+                self.in_pre = False
+                self.list_items = []
+                self.in_list = False
+
+            def handle_starttag(self, tag, attrs):
+                if tag == 'h1':
+                    self.current_style = self.styles['Heading1']
+                elif tag == 'h2':
+                    self.current_style = self.styles['Heading2']
+                elif tag == 'h3':
+                    self.current_style = self.styles['Heading3']
+                elif tag == 'h4':
+                    self.current_style = self.styles['Heading4']
+                elif tag == 'p':
+                    self.current_style = self.styles['Normal']
+                elif tag == 'code':
+                    self.in_code = True
+                elif tag == 'pre':
+                    self.in_pre = True
+                elif tag in ['ul', 'ol']:
+                    self.in_list = True
+                    self.list_items = []
+
+            def handle_endtag(self, tag):
+                if tag in ['h1', 'h2', 'h3', 'h4', 'p']:
+                    if self.current_text:
+                        text = ''.join(self.current_text).strip()
+                        if text:
+                            self.elements.append(Paragraph(text, self.current_style))
+                            self.elements.append(Spacer(1, 0.2*inch))
+                        self.current_text = []
+                elif tag == 'code':
+                    self.in_code = False
+                elif tag == 'pre':
+                    if self.current_text:
+                        text = ''.join(self.current_text)
+                        self.elements.append(Preformatted(text, self.styles['Code']))
+                        self.elements.append(Spacer(1, 0.2*inch))
+                        self.current_text = []
+                    self.in_pre = False
+                elif tag in ['ul', 'ol']:
+                    self.in_list = False
+                elif tag == 'li':
+                    if self.current_text:
+                        text = ''.join(self.current_text).strip()
+                        if text:
+                            bullet = '• ' if self.in_list else ''
+                            self.elements.append(Paragraph(f'{bullet}{text}', self.styles['Normal']))
+                        self.current_text = []
+
+            def handle_data(self, data):
+                if self.in_code:
+                    self.current_text.append(f'<font name="Courier">{data}</font>')
+                else:
+                    self.current_text.append(data)
+
+        parser = HTMLToFlowables(styles)
+        parser.feed(html_content)
+        elements.extend(parser.elements)
+
+        # Build PDF
+        doc.build(elements)
 
         logger.info(f"Successfully created PDF: {output_pdf_path}")
 
@@ -164,415 +228,49 @@ async def markdown_to_pdf(args: dict) -> dict:
         }
 
 
-def _get_css_style(css_style: Optional[str]) -> str:
-    """Get CSS styling based on the specified style preset or custom file.
+def _add_custom_styles(styles, style_name: str):
+    """Add custom styles to the ReportLab style sheet.
 
     Args:
-        css_style: Style preset name ('default', 'github', 'minimal') or path to CSS file
-
-    Returns:
-        CSS content as string
+        styles: ReportLab StyleSheet to modify
+        style_name: Name of the style preset ('default', 'github', 'minimal')
     """
-    # If no style specified, use default
-    if css_style is None:
-        css_style = 'default'
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.colors import HexColor
 
-    # Check if it's a file path
-    css_path = Path(css_style)
-    if css_path.exists() and css_path.is_file():
-        logger.info(f"Using custom CSS file: {css_style}")
-        return css_path.read_text(encoding='utf-8')
+    # Add a Code style for preformatted text (if it doesn't already exist)
+    if 'Code' not in styles:
+        styles.add(ParagraphStyle(
+            name='Code',
+            parent=styles['Normal'],
+            fontName='Courier',
+            fontSize=9,
+            leftIndent=20,
+            rightIndent=20,
+            spaceBefore=6,
+            spaceAfter=6,
+            backColor=HexColor('#f6f8fa'),
+        ))
 
-    # Use preset styles
-    if css_style == 'github':
-        return _get_github_style()
-    elif css_style == 'minimal':
-        return _get_minimal_style()
+    # Customize based on style preset
+    if style_name == 'github':
+        # GitHub-style customizations
+        styles['Heading1'].fontSize = 28
+        styles['Heading2'].fontSize = 22
+        styles['Heading3'].fontSize = 18
+        styles['Normal'].fontSize = 12
+        styles['Normal'].textColor = HexColor('#24292f')
+    elif style_name == 'minimal':
+        # Minimal style customizations
+        styles['Heading1'].fontSize = 20
+        styles['Heading1'].fontName = 'Times-Bold'
+        styles['Heading2'].fontSize = 18
+        styles['Heading2'].fontName = 'Times-Bold'
+        styles['Normal'].fontName = 'Times-Roman'
+        styles['Normal'].fontSize = 12
     else:
-        return _get_default_style()
-
-
-def _get_default_style() -> str:
-    """Get default CSS styling for PDF output."""
-    return """
-        @page {
-            size: letter;
-            margin: 1in;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            font-size: 11pt;
-            line-height: 1.6;
-            color: #333;
-        }
-
-        .container {
-            max-width: 100%;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            margin-top: 24pt;
-            margin-bottom: 12pt;
-            font-weight: 600;
-            line-height: 1.25;
-            page-break-after: avoid;
-        }
-
-        h1 {
-            font-size: 24pt;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 8pt;
-        }
-
-        h2 {
-            font-size: 20pt;
-            border-bottom: 1px solid #eee;
-            padding-bottom: 8pt;
-        }
-
-        h3 { font-size: 16pt; }
-        h4 { font-size: 14pt; }
-        h5 { font-size: 12pt; }
-        h6 { font-size: 11pt; }
-
-        p {
-            margin-top: 0;
-            margin-bottom: 12pt;
-        }
-
-        a {
-            color: #0366d6;
-            text-decoration: none;
-        }
-
-        code {
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-            font-size: 9pt;
-            background-color: #f6f8fa;
-            padding: 2pt 4pt;
-            border-radius: 3pt;
-        }
-
-        pre {
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-            font-size: 9pt;
-            background-color: #f6f8fa;
-            padding: 12pt;
-            border-radius: 6pt;
-            overflow-x: auto;
-            margin-bottom: 12pt;
-            page-break-inside: avoid;
-        }
-
-        pre code {
-            background-color: transparent;
-            padding: 0;
-        }
-
-        blockquote {
-            margin: 0;
-            padding-left: 12pt;
-            border-left: 3pt solid #dfe2e5;
-            color: #6a737d;
-        }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-bottom: 12pt;
-            page-break-inside: avoid;
-        }
-
-        table th,
-        table td {
-            padding: 6pt 12pt;
-            border: 1pt solid #dfe2e5;
-        }
-
-        table th {
-            background-color: #f6f8fa;
-            font-weight: 600;
-        }
-
-        table tr:nth-child(even) {
-            background-color: #f6f8fa;
-        }
-
-        ul, ol {
-            margin-top: 0;
-            margin-bottom: 12pt;
-            padding-left: 24pt;
-        }
-
-        li {
-            margin-bottom: 4pt;
-        }
-
-        img {
-            max-width: 100%;
-            height: auto;
-        }
-
-        hr {
-            height: 0;
-            border: 0;
-            border-top: 1pt solid #dfe2e5;
-            margin: 24pt 0;
-        }
-
-        /* Code highlighting */
-        .codehilite {
-            background-color: #f6f8fa;
-            padding: 12pt;
-            border-radius: 6pt;
-            margin-bottom: 12pt;
-            page-break-inside: avoid;
-        }
-    """
-
-
-def _get_github_style() -> str:
-    """Get GitHub-flavored CSS styling for PDF output."""
-    return """
-        @page {
-            size: letter;
-            margin: 0.75in;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-            font-size: 12pt;
-            line-height: 1.6;
-            color: #24292f;
-            background-color: white;
-        }
-
-        .container {
-            max-width: 100%;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            margin-top: 24pt;
-            margin-bottom: 16pt;
-            font-weight: 600;
-            line-height: 1.25;
-            page-break-after: avoid;
-        }
-
-        h1 {
-            font-size: 28pt;
-            padding-bottom: 0.3em;
-            border-bottom: 1px solid #d0d7de;
-        }
-
-        h2 {
-            font-size: 22pt;
-            padding-bottom: 0.3em;
-            border-bottom: 1px solid #d0d7de;
-        }
-
-        h3 { font-size: 18pt; }
-        h4 { font-size: 14pt; }
-        h5 { font-size: 12pt; }
-        h6 { font-size: 11pt; color: #57606a; }
-
-        p {
-            margin-top: 0;
-            margin-bottom: 16pt;
-        }
-
-        a {
-            color: #0969da;
-            text-decoration: none;
-        }
-
-        code {
-            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-            font-size: 10pt;
-            background-color: rgba(175, 184, 193, 0.2);
-            padding: 2pt 4pt;
-            border-radius: 6pt;
-        }
-
-        pre {
-            font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-            font-size: 10pt;
-            background-color: #f6f8fa;
-            padding: 16pt;
-            border-radius: 6pt;
-            overflow-x: auto;
-            margin-bottom: 16pt;
-            page-break-inside: avoid;
-        }
-
-        pre code {
-            background-color: transparent;
-            padding: 0;
-        }
-
-        blockquote {
-            margin: 0;
-            padding-left: 16pt;
-            border-left: 4pt solid #d0d7de;
-            color: #57606a;
-        }
-
-        table {
-            border-collapse: collapse;
-            border-spacing: 0;
-            width: 100%;
-            margin-bottom: 16pt;
-            page-break-inside: avoid;
-        }
-
-        table th,
-        table td {
-            padding: 6pt 13pt;
-            border: 1pt solid #d0d7de;
-        }
-
-        table th {
-            background-color: #f6f8fa;
-            font-weight: 600;
-        }
-
-        table tr {
-            background-color: white;
-            border-top: 1pt solid #d0d7de;
-        }
-
-        table tr:nth-child(2n) {
-            background-color: #f6f8fa;
-        }
-
-        ul, ol {
-            margin-top: 0;
-            margin-bottom: 16pt;
-            padding-left: 32pt;
-        }
-
-        li + li {
-            margin-top: 4pt;
-        }
-
-        img {
-            max-width: 100%;
-            height: auto;
-        }
-
-        hr {
-            height: 2pt;
-            padding: 0;
-            margin: 24pt 0;
-            background-color: #d0d7de;
-            border: 0;
-        }
-
-        .codehilite {
-            background-color: #f6f8fa;
-            padding: 16pt;
-            border-radius: 6pt;
-            margin-bottom: 16pt;
-            page-break-inside: avoid;
-        }
-    """
-
-
-def _get_minimal_style() -> str:
-    """Get minimal CSS styling for PDF output."""
-    return """
-        @page {
-            size: letter;
-            margin: 1in;
-        }
-
-        body {
-            font-family: "Times New Roman", Times, serif;
-            font-size: 12pt;
-            line-height: 1.5;
-            color: #000;
-        }
-
-        .container {
-            max-width: 100%;
-        }
-
-        h1, h2, h3, h4, h5, h6 {
-            margin-top: 18pt;
-            margin-bottom: 12pt;
-            font-weight: bold;
-            page-break-after: avoid;
-        }
-
-        h1 { font-size: 20pt; }
-        h2 { font-size: 18pt; }
-        h3 { font-size: 16pt; }
-        h4 { font-size: 14pt; }
-        h5 { font-size: 12pt; }
-        h6 { font-size: 12pt; }
-
-        p {
-            margin-top: 0;
-            margin-bottom: 12pt;
-        }
-
-        a {
-            color: #000;
-            text-decoration: underline;
-        }
-
-        code, pre {
-            font-family: "Courier New", Courier, monospace;
-            font-size: 10pt;
-        }
-
-        pre {
-            background-color: #f5f5f5;
-            padding: 12pt;
-            margin-bottom: 12pt;
-            border: 1pt solid #ccc;
-            page-break-inside: avoid;
-        }
-
-        blockquote {
-            margin: 0;
-            padding-left: 12pt;
-            border-left: 2pt solid #ccc;
-            font-style: italic;
-        }
-
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-bottom: 12pt;
-            page-break-inside: avoid;
-        }
-
-        table th,
-        table td {
-            padding: 6pt;
-            border: 1pt solid #000;
-        }
-
-        table th {
-            font-weight: bold;
-        }
-
-        ul, ol {
-            margin-top: 0;
-            margin-bottom: 12pt;
-            padding-left: 24pt;
-        }
-
-        img {
-            max-width: 100%;
-            height: auto;
-        }
-
-        hr {
-            border: 0;
-            border-top: 1pt solid #000;
-            margin: 18pt 0;
-        }
-    """
+        # Default style customizations
+        styles['Heading1'].fontSize = 24
+        styles['Heading2'].fontSize = 20
+        styles['Heading3'].fontSize = 16
+        styles['Normal'].fontSize = 11
